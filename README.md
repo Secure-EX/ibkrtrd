@@ -1,6 +1,6 @@
 # 📈 Portfolio Analysis Assistant (私人投顾)
 
-[![Python](https://img.shields.io/badge/Python-3.14-blue)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.12-blue)](https://www.python.org/)
 [![IBKR API](https://img.shields.io/badge/IBKR-TWS%20API-red)](https://interactivebrokers.github.io/tws-api/)
 
 ## 📖 项目简介 (Introduction)
@@ -23,14 +23,14 @@
 
 ## 🛠️ 技术栈 (Tech Stack)
 
-- **核心语言**: Python 3.14
+- **核心语言**: Python 3.12
 - **交易接口**: `ib_insync` (这也是 TWS API 的最佳封装)
-- **数据分析**: `pandas`, `pandas_ta`, `yfinance` (用于补充 PE/PB 数据)
+- **数据分析**: `pandas`, `pandas-ta`, `yfinance` (用于补充 PE/PB 数据)
 - **未来计划**: `Streamlit` (可视化仪表盘), `Local LLM` (Qwen/DeepSeek 用于财报分析)
 
 ## 🚀 快速开始 (Quick Start)
 
-### 0. 项目结构 (Structure)
+### 0. 📂 项目结构 (Structure)
 ```
 IBKR Portfolio Analysis Assistant/
 ├── main.py                       # 主程序入口
@@ -42,16 +42,19 @@ IBKR Portfolio Analysis Assistant/
 │   ├── risk_analysis.py          # 风险分析 (胜率/赔率)
 │   └── emotional_analysis.py     # 市场情绪分析
 ├── data/                         # (可选) 本地数据存储
+│   ├── 
+│   ├── 
+│   ├── 
 │   └── market_data.csv           # 待升级为带分区的 Postgres SQL 数据库
 ├── requirements.txt              # 模组列表
 └── README.md                     # 项目说明文档
 ```
 
-### 1. 环境要求 (Environment)
+### 1. 🌏 环境要求 (Environment)
 - 操作系统: Windows / macOS / Linux (本项目在 i7-6700 Windows 环境下优化测试)
 - 已安装 [IBKR TWS (Trader Workstation)](https://www.interactivebrokers.com/en/trading/tws.php) 或 IB Gateway。
 
-### 2. 安装依赖 (Dependency)
+### 2. 🎁 安装依赖 (Dependency)
 ```bash
 pip install ib_insync pandas pandas_ta yfinance
 ```
