@@ -1,0 +1,22 @@
+# === 1. 数据安全 (Data Privacy) ===
+# 忽略 data 文件夹下的所有内容
+data/
+
+# === 2. Python 缓存文件 (Junk Files) ===
+# 这些是 Python 运行时自动生成的，不需要上传
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# === 3. IDE 配置文件 (IDE Settings) ===
+# 你的 PyCharm 或 VSCode 配置属于个人偏好，不需要上传
+.idea/
+.vscode/
+
+# === 4. 系统文件 ===
+.DS_Store
+*.log
+
+# === 5. 敏感信息 ===
+.env
