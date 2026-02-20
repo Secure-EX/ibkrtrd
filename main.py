@@ -46,7 +46,7 @@ def main():
             print("="*40)
 
         # --- 任务 B: 获取持仓 ---
-        my_portfolio = client.get_portfolio(account_id=ACCOUNT_ID)
+        my_portfolio = client.???(account_id=ACCOUNT_ID)
         if not my_portfolio.empty:
             # 保存持仓数据
             port_path = PORTFOLIO_DIR / "portfolio_data.csv"
