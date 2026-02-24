@@ -3,7 +3,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 from pathlib import Path
 
-# 加载 .env 文件
+# 加载 .env 文件中的敏感信息
 load_dotenv()
 
 # === 1. 基础路径配置 ===
@@ -15,31 +15,33 @@ DATA_DIR = BASE_DIR / "data"
 # 未来这对应数据库 partition key: values from ('2026-02-18')
 TODAY_STR = datetime.now().strftime("%Y%m%d")
 
-# === 3. 定义子目录 (自动追加日期分区) ===
-# 最终路径示例: .../data/portfolio/20260218/
+# === 3. 定义子目录结构 ===
 
 # 3.0 定义根输入输出路径
 INPUT_ROOT = DATA_DIR / "input"
 OUTPUT_ROOT = DATA_DIR / "output"
 
-# 3.1 输入内容 (Raw Data / Ingestion)
-PORTFOLIO_DIR = INPUT_ROOT / "portfolio" / TODAY_STR       # 持仓快照
-TRANSACTIONS_DIR = INPUT_ROOT / "transactions" / TODAY_STR # 交易流水
-MARKET_DIR = INPUT_ROOT / "financials" / TODAY_STR             # 大盘指数 (SPX, HSI) (OHLC)
-STOCK_DIR = INPUT_ROOT / "stock" / TODAY_STR               # 个股 (OHLC)
-FUNDAMENTAL_DIR = INPUT_ROOT / "fundamental" / TODAY_STR   # 财报/基本面
-SENTIMENT_DIR = INPUT_ROOT / "sentiment" / TODAY_STR       # 情绪数据(新闻/舆情)
+# 3.1 输入层 (Input: 生数据 CSV)
+# 按日分区的流式数据 (每天生成新文件)
+PORTFOLIO_DIR = INPUT_ROOT / "portfolio" / TODAY_STR          # 持仓快照
+TRANSACTIONS_DIR = INPUT_ROOT / "transactions" / TODAY_STR    # 交易流水
 
-# 3.2 输出内容 (Processed Data / Analytics)
-TECHNICAL_DIR = OUTPUT_ROOT / "technical" / TODAY_STR      # 技术指标计算结果
-RISK_DIR = OUTPUT_ROOT / "risk" / TODAY_STR                # 胜率/赔率/风控分析
-SUMMARY_DIR = OUTPUT_ROOT / "summary" / TODAY_STR          # 最终生成的周报/总结
+# 平铺覆盖的历史主数据 (直接覆写文件，无须按日建文件夹)
+OHLCV_DIR = INPUT_ROOT / "ohlcv"                              # 历史日K线量价数据
+FINANCIALS_DIR = INPUT_ROOT / "financials"                    # 财报三表数据
+SENTIMENT_DIR = INPUT_ROOT / "sentiment"                      # 沽空与情绪数据
+
+# 3.2 输出层 (Output: 熟数据 JSON 与分析报告)
+ARCHIVE_DIR = OUTPUT_ROOT / "_archive" / TODAY_STR            # 滚动冷备份，防止最新 JSON 损坏
+LATEST_DIR = OUTPUT_ROOT / "latest"                           # [核心] 永远存放最新、最全的单股 JSON (如 0700_HK.json)
+FINAL_REPORTS_DIR = OUTPUT_ROOT / "final_reports" / TODAY_STR # LLM 生成的最终 Markdown 报告
 
 # === 4. 自动创建所有目录 ===
 # 将所有路径放入列表，批量创建
 ALL_DIRS = [
-    PORTFOLIO_DIR, TRANSACTIONS_DIR, MARKET_DIR, STOCK_DIR, FUNDAMENTAL_DIR, SENTIMENT_DIR,
-    TECHNICAL_DIR, RISK_DIR, SUMMARY_DIR
+    PORTFOLIO_DIR, TRANSACTIONS_DIR,
+    OHLCV_DIR, FINANCIALS_DIR, SENTIMENT_DIR,
+    ARCHIVE_DIR, LATEST_DIR, FINAL_REPORTS_DIR
 ]
 
 for folder in ALL_DIRS:
@@ -50,6 +52,13 @@ for folder in ALL_DIRS:
 # === 5. 账户与API配置 ===
 # 优先从环境变量获取
 ACCOUNT_ID = os.getenv("IBKR_ACCOUNT_ID")
-IBKR_HOST = "127.0.0.1"
-IBKR_PORT = int(os.getenv("IBKR_PORT"))
-CLIENT_ID = int(os.getenv("IBKR_CLIENT_ID"))
+IBKR_HOST = os.getenv("IBKR_HOST", "127.0.0.1") # 给个默认值兜底
+IBKR_PORT = int(os.getenv("IBKR_PORT", 7496))   # 默认模拟交易端口 7497，实盘是 7496
+CLIENT_ID = int(os.getenv("IBKR_CLIENT_ID", 1))
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# GROK_API_KEY = os.getenv("GROK_API_KEY")
+
+# === 6. 全局业务参数配置 ===
+# 控制数据抓取的深度和逻辑
+LOOKBACK_YEARS = 15  # 默认回溯 15 年的数据，以覆盖完整宏观牛熊周期
