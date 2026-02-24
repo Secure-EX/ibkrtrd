@@ -2,8 +2,8 @@ import pandas as pd
 # 导入配置和模块
 from config import PORTFOLIO_DIR, TRANSACTIONS_DIR, MARKET_DIR, STOCK_DIR, FUNDAMENTAL_DIR, EMOTIONAL_DIR, TECHNICAL_DIR, RISK_DIR, SUMMARY_DIR, ACCOUNT_ID
 from data_pull.data_pull import IBKRClient
-from strategies.technical_analysis import LocalAnalyzer
-from strategies.fundamental_analysis import get_valuation_metrics
+from processors.technical_calc import LocalAnalyzer
+from processors.fundamental_calc import get_valuation_metrics
 
 def main():
     # 1. 初始化连接

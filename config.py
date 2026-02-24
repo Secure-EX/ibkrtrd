@@ -25,10 +25,10 @@ OUTPUT_ROOT = DATA_DIR / "output"
 # 3.1 输入内容 (Raw Data / Ingestion)
 PORTFOLIO_DIR = INPUT_ROOT / "portfolio" / TODAY_STR       # 持仓快照
 TRANSACTIONS_DIR = INPUT_ROOT / "transactions" / TODAY_STR # 交易流水
-MARKET_DIR = INPUT_ROOT / "market" / TODAY_STR             # 大盘指数 (SPX, HSI) (OHLC)
+MARKET_DIR = INPUT_ROOT / "financials" / TODAY_STR             # 大盘指数 (SPX, HSI) (OHLC)
 STOCK_DIR = INPUT_ROOT / "stock" / TODAY_STR               # 个股 (OHLC)
 FUNDAMENTAL_DIR = INPUT_ROOT / "fundamental" / TODAY_STR   # 财报/基本面
-EMOTIONAL_DIR = INPUT_ROOT / "emotional" / TODAY_STR       # 情绪数据(新闻/舆情)
+SENTIMENT_DIR = INPUT_ROOT / "sentiment" / TODAY_STR       # 情绪数据(新闻/舆情)
 
 # 3.2 输出内容 (Processed Data / Analytics)
 TECHNICAL_DIR = OUTPUT_ROOT / "technical" / TODAY_STR      # 技术指标计算结果
@@ -38,7 +38,7 @@ SUMMARY_DIR = OUTPUT_ROOT / "summary" / TODAY_STR          # 最终生成的周�
 # === 4. 自动创建所有目录 ===
 # 将所有路径放入列表，批量创建
 ALL_DIRS = [
-    PORTFOLIO_DIR, TRANSACTIONS_DIR, MARKET_DIR, STOCK_DIR, FUNDAMENTAL_DIR, EMOTIONAL_DIR,
+    PORTFOLIO_DIR, TRANSACTIONS_DIR, MARKET_DIR, STOCK_DIR, FUNDAMENTAL_DIR, SENTIMENT_DIR,
     TECHNICAL_DIR, RISK_DIR, SUMMARY_DIR
 ]
 
@@ -51,5 +51,5 @@ for folder in ALL_DIRS:
 # 优先从环境变量获取
 ACCOUNT_ID = os.getenv("IBKR_ACCOUNT_ID")
 IBKR_HOST = "127.0.0.1"
-IBKR_PORT = int(os.getenv("IBKR_PORT", 7496))    # 实盘 7496, 模拟盘 7497
-CLIENT_ID = int(os.getenv("IBKR_CLIENT_ID", 1))  # 唯一 ID
+IBKR_PORT = int(os.getenv("IBKR_PORT"))
+CLIENT_ID = int(os.getenv("IBKR_CLIENT_ID"))
