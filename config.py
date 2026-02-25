@@ -14,6 +14,7 @@ DATA_DIR = BASE_DIR / "data"
 # 获取今日日期，例如: 20260218
 # 未来这对应数据库 partition key: values from ('2026-02-18')
 TODAY_STR = datetime.now().strftime("%Y%m%d")
+CURRENT_YEAR = datetime.now().strftime("%Y") # 用于交易流水按年滚动
 
 # === 3. 定义子目录结构 ===
 
@@ -22,9 +23,9 @@ INPUT_ROOT = DATA_DIR / "input"
 OUTPUT_ROOT = DATA_DIR / "output"
 
 # 3.1 输入层 (Input: 生数据 CSV)
-# 按日分区的流式数据 (每天生成新文件)
-PORTFOLIO_DIR = INPUT_ROOT / "portfolio" / TODAY_STR          # 持仓快照
-TRANSACTIONS_DIR = INPUT_ROOT / "transactions" / TODAY_STR    # 交易流水
+# 按日分区的流式数据 (每天生成新文件或覆写文件)
+PORTFOLIO_DIR = INPUT_ROOT / "portfolio"                      # 持仓快照
+TRANSACTIONS_DIR = INPUT_ROOT / "transactions"                # 交易流水
 
 # 平铺覆盖的历史主数据 (直接覆写文件，无须按日建文件夹)
 OHLCV_DIR = INPUT_ROOT / "ohlcv"                              # 历史日K线量价数据
@@ -32,9 +33,9 @@ FINANCIALS_DIR = INPUT_ROOT / "financials"                    # 财报三表数�
 SENTIMENT_DIR = INPUT_ROOT / "sentiment"                      # 沽空与情绪数据
 
 # 3.2 输出层 (Output: 熟数据 JSON 与分析报告)
-ARCHIVE_DIR = OUTPUT_ROOT / "_archive" / TODAY_STR            # 滚动冷备份，防止最新 JSON 损坏
-LATEST_DIR = OUTPUT_ROOT / "latest"                           # [核心] 永远存放最新、最全的单股 JSON (如 0700_HK.json)
-FINAL_REPORTS_DIR = OUTPUT_ROOT / "final_reports" / TODAY_STR # LLM 生成的最终 Markdown 报告
+ARCHIVE_DIR = OUTPUT_ROOT / "_archive"                        # 滚动冷备份，防止最新 JSON 损坏
+LATEST_DIR = OUTPUT_ROOT / "latest"                           # [核心] 永远存放最新、最全的单股 JSON (如 0700_HK_yyyymmdd.json)
+FINAL_REPORTS_DIR = OUTPUT_ROOT / "final_reports"             # LLM 生成的最终 Markdown 报告 (如 GEMINI_MODEL_ID_VERSION_yyyymmdd.md 或 GROK_MODEL_ID_VERSION_yyyymmdd.md)
 
 # === 4. 自动创建所有目录 ===
 # 将所有路径放入列表，批量创建

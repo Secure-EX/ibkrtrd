@@ -1,13 +1,10 @@
-import os
 import sys
 import pandas as pd
 import pandas_ta as ta
 import numpy as np
 from pathlib import Path
 
-# ==========================================
-# 动态路径配置
-# ==========================================
+# 为了确保在终端里直接运行此文件也能找到根目录的 config.py，需要将项目根目录加入 sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR))
 
