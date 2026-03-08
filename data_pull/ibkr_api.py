@@ -1,9 +1,9 @@
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 import pandas as pd
-from ib_insync import IB, ExecutionFilter
+from ib_insync import IB
 from pathlib import Path
-from config import PORTFOLIO_DIR, TRANSACTIONS_DIR, IBKR_HOST, IBKR_PORT, CLIENT_ID, ACCOUNT_ID, TODAY_STR, CURRENT_YEAR
+from config import PORTFOLIO_DIR, IBKR_HOST, IBKR_PORT, CLIENT_ID, ACCOUNT_ID, TODAY_STR
 
 # 为了确保在终端里直接运行此文件也能找到根目录的 config.py，需要将项目根目录加入 sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
