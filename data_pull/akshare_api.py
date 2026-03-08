@@ -1,6 +1,7 @@
 import sys
 import pandas as pd
 import akshare as ak
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from config import OHLCV_DIR, LOOKBACK_YEARS
@@ -38,56 +39,70 @@ def fetch_hk_ohlcv(ticker_symbol: str, years: int = LOOKBACK_YEARS)-> bool:
     start_date_str = start_date_obj.strftime("%Y%m%d")
     end_date_str = end_date_obj.strftime("%Y%m%d")
 
-    try:
-        # 3. 调用 AkShare 接口
-        # period="daily" 代表日线
-        # adjust="qfq" 代表前复权 (极其重要！技术分析必须用前复权价格，否则分红除权会导致均线断层)
-        df = ak.stock_hk_hist(
-            symbol=ak_symbol,
-            period="daily",
-            start_date=start_date_str,
-            end_date=end_date_str,
-            adjust="qfq"
-        )
+    max_retries = 3
 
-        if df is None or df.empty:
-            print(f"❌ 未能获取到 {ticker_symbol} 的数据，API 返回为空。")
-            return False
+    for attempt in range(1, max_retries + 1):
+        try:
+            # 加上一个极其细微的随机延迟，防止并发请求被直接拉黑
+            if attempt > 1:
+                print(f"   ⚠️ 第 {attempt} 次尝试重新连接东方财富服务器...")
+                time.sleep(3)
 
-        # 4. 列名标准化清洗 (将中文列名映射为标准的英文列名，方便后续 Pandas 处理)
-        rename_map = {
-            '日期': 'Date',
-            '开盘': 'Open',
-            '收盘': 'Close',
-            '最高': 'High',
-            '最低': 'Low',
-            '成交量': 'Volume',
-            '成交额': 'Turnover_Value', # 成交额 (金额)
-            '振幅': 'Amplitude',
-            '涨跌幅': 'Pct_Chg',
-            '涨跌额': 'Change',
-            '换手率': 'Turnover_Rate'
-        }
-        df.rename(columns=rename_map, inplace=True)
+            # 3. 调用 AkShare 接口
+            # period="daily" 代表日线
+            # adjust="qfq" 代表前复权 (极其重要！技术分析必须用前复权价格，否则分红除权会导致均线断层)
+            df = ak.stock_hk_hist(
+                symbol=ak_symbol,
+                period="daily",
+                start_date=start_date_str,
+                end_date=end_date_str,
+                adjust="qfq"
+            )
 
-        # 确保 Date 列是标准的 YYYY-MM-DD 格式
-        df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
+            if df is None or df.empty:
+                print(f"❌ 未能获取到 {ticker_symbol} 的数据，API 返回为空。")
+                return False
 
-        # 5. 直接使用 config 里的 OHLCV_DIR 落盘
-        df.sort_values('Date', ascending=True, inplace=True)
-        file_path = OHLCV_DIR / f"{ticker_symbol}_daily.csv"
+            # 4. 列名标准化清洗 (将中文列名映射为标准的英文列名，方便后续 Pandas 处理)
+            rename_map = {
+                '日期': 'Date',
+                '开盘': 'Open',
+                '收盘': 'Close',
+                '最高': 'High',
+                '最低': 'Low',
+                '成交量': 'Volume',
+                '成交额': 'Turnover_Value', # 成交额 (金额)
+                '振幅': 'Amplitude',
+                '涨跌幅': 'Pct_Chg',
+                '涨跌额': 'Change',
+                '换手率': 'Turnover_Rate'
+            }
+            df.rename(columns=rename_map, inplace=True)
 
-        # index=False 保证不会把无意义的行号存入 CSV
-        df.to_csv(file_path, index=False, encoding='utf-8')
-        print(f"✅ 成功! {ticker_symbol} 量价数据已存入: {file_path} (共 {len(df)} 条交易日)")
-        return True
+            # 确保 Date 列是标准的 YYYY-MM-DD 格式
+            df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
 
-    except KeyError as e:
-        print(f"❌ 数据解析失败，通常是因为触发了 API 频控或代码不存在。错误键: {str(e)}")
-        return False
-    except Exception as e:
-        print(f"❌ 抓取 {ticker_symbol} 数据时发生未知错误: {str(e)}")
-        return False
+            # 5. 直接使用 config 里的 OHLCV_DIR 落盘
+            df.sort_values('Date', ascending=True, inplace=True)
+            file_path = OHLCV_DIR / f"{ticker_symbol}_daily.csv"
+
+            # index=False 保证不会把无意义的行号存入 CSV
+            df.to_csv(file_path, index=False, encoding='utf-8')
+            print(f"✅ 成功! {ticker_symbol} 量价数据已存入: {file_path} (共 {len(df)} 条交易日)")
+            return True  # 成功落盘就直接跳出函数
+
+        except Exception as e:
+            err_msg = str(e)
+            if "Connection aborted" in err_msg or "RemoteDisconnected" in err_msg or "timeout" in err_msg.lower():
+                print(f"   🛑 网络被掐断: {err_msg}")
+                if attempt == max_retries:
+                    print(f"❌ {ticker_symbol} 连续 {max_retries} 次抓取失败，请检查网络或稍后再试。")
+                    return False
+                continue # 继续下一次 for 循环重试
+            else:
+                # 如果是 KeyError 等数据结构错误，说明不是网络问题，直接抛出
+                print(f"❌ 数据解析或其它致命错误: {err_msg}")
+                return False
 
 # ==========================================
 # 测试模块 (仅在该文件被直接运行时触发)
