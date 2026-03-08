@@ -3,11 +3,12 @@ from datetime import datetime
 import pandas as pd
 from ib_insync import IB
 from pathlib import Path
-from config import PORTFOLIO_DIR, IBKR_HOST, IBKR_PORT, CLIENT_ID, ACCOUNT_ID, TODAY_STR
 
 # 为了确保在终端里直接运行此文件也能找到根目录的 config.py，需要将项目根目录加入 sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR))
+
+from config import PORTFOLIO_DIR, IBKR_HOST, IBKR_PORT, CLIENT_ID, ACCOUNT_ID, TODAY_STR
 
 # ==========================================
 # Function 1: 从 IBKR 拉取核心持仓与价格数据 (多币种隔离与汇率版)
@@ -91,18 +92,18 @@ def fetch_ibkr_base_data(ib, account_id):
 
         summary_rows.append({
             "Currency": curr,
-            "Total Cash": round(c_cash, 2),
-            "Market Value": round(c_mkt, 2),
-            "Net Liquidation": round(c_net, 2),
+            "Total Cash": c_cash,
+            "Market Value": c_mkt,
+            "Net Liquidation": c_net,
             "Exchange Rate": fx   # 对 BASE 的汇率
         })
 
     # 补上基础货币总览，使用IBKR 官方汇率和基础货币价值直接用汇率加权算出的 BASE_TOTAL_CALC
     summary_rows.append({
         "Currency": "BASE_TOTAL_CALC",
-        "Total Cash": round(calc_base_cash, 2),
-        "Market Value": round(calc_base_mkt, 2),
-        "Net Liquidation": round(calc_base_net, 2),
+        "Total Cash": calc_base_cash,
+        "Market Value": calc_base_mkt,
+        "Net Liquidation": calc_base_net,
         "Exchange Rate": 1.0
     })
 
@@ -191,17 +192,17 @@ def fetch_ibkr_base_data(ib, account_id):
             "Symbol": item.contract.symbol,
             "Company Name (EN)": names.get(con_id, "N/A"),
             "Currency": local_curr,
-            "% of Net Liq": round(weight_pct, 4),
-            "Avg Price": round(avg_price, 2),
-            "Last": round(last_price, 2),
-            "Change": round(change, 2),
-            "Change %": round(change_pct, 4),
-            "Daily P&L": round(daily_pnl, 2),
-            "Daily P&L %": round(daily_pnl_pct, 4),
-            "Market Value": round(market_val, 2),
-            "Cost Basis": round(position * avg_price, 2),
-            "Unrealized P&L": round(item.unrealizedPNL, 2),
-            "Unrealized P&L %": round(item.unrealizedPNL / (position * avg_price), 4) if (position * avg_price) > 0 else 0.0,
+            "Net Liq Ratio": weight_pct,
+            "Avg Price": avg_price,
+            "Last": last_price,
+            "Change": change,
+            "Change Ratio": change_pct,
+            "Daily P&L": daily_pnl,
+            "Daily P&L Ratio": daily_pnl_pct,
+            "Market Value": market_val,
+            "Cost Basis": position * avg_price,
+            "Unrealized P&L": item.unrealizedPNL,
+            "Unrealized P&L Ratio": (item.unrealizedPNL / (position * avg_price)) if (position * avg_price) > 0 else 0.0,
             "Position": position
         })
 

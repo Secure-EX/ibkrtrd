@@ -3,11 +3,12 @@ import json
 import pandas as pd
 import yfinance as yf
 from pathlib import Path
-from config import FINANCIALS_DIR
 
 # 为了确保在终端里直接运行此文件也能找到根目录的 config.py，需要将项目根目录加入 sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR))
+
+from config import FINANCIALS_DIR
 
 def fetch_financials(ticker_symbol: str) -> bool:
     """
@@ -37,23 +38,26 @@ def fetch_financials(ticker_symbol: str) -> bool:
     # 2. 抓取三大财报 -> 转置并保存为 CSV
     # ==========================================
     # 映射字典：将 yfinance 的属性对象与我们要保存的文件名后缀对应起来
-    financial_statements = {
-        "annual_income": ticker.financials,
-        "quarterly_income": ticker.quarterly_financials,
-        "annual_balance": ticker.balance_sheet,
-        "quarterly_balance": ticker.quarterly_balance_sheet,
-        "annual_cashflow": ticker.cashflow,
-        "quarterly_cashflow": ticker.quarterly_cashflow
+    financial_statements_map = {
+        "annual_income": "financials",
+        "quarterly_income": "quarterly_financials",
+        "annual_balance": "balance_sheet",
+        "quarterly_balance": "quarterly_balance_sheet",
+        "annual_cashflow": "cashflow",
+        "quarterly_cashflow": "quarterly_cashflow"
     }
 
-    for name, df in financial_statements.items():
+    for name, attr_name in financial_statements_map.items():
         try:
+            # 在这里（try块内部）才真正发起网络请求拉取数据
+            df = getattr(ticker, attr_name)
+
             # yfinance 如果没有数据，可能会返回 None 或空的 DataFrame
             if df is None or df.empty:
                 print(f"  ⚠️ {name} 数据为空，跳过。")
                 continue
 
-            # 🌟 核心动作：矩阵转置 (Transpose)
+            # 矩阵转置 (Transpose)
             # 原本：列名是日期 (2025-12-31, 2024-12-31...)，行名是指标 (Total Revenue...)
             # 转置后：行变日期，列变指标，这才是量化数据该有的样子！
             df_transposed = df.T

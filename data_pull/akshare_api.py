@@ -4,11 +4,12 @@ import akshare as ak
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from config import OHLCV_DIR, LOOKBACK_YEARS
 
 # 为了确保在终端里直接运行此文件也能找到根目录的 config.py，需要将项目根目录加入 sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR))
+
+from config import OHLCV_DIR, LOOKBACK_YEARS
 
 # ==========================================
 # 核心拉取函数

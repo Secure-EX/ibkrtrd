@@ -3,11 +3,12 @@ import json
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
-from config import FINANCIALS_DIR
 
 # 为了确保在终端里直接运行此文件也能找到根目录的 config.py，需要将项目根目录加入 sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR))
+
+from config import FINANCIALS_DIR
 
 def _safe_div(numerator, denominator):
     """安全除法，防止除以 0 或 NaN"""
@@ -44,12 +45,12 @@ def _calc_adjusted_pr(pe, roe_decimal, payout_ratio):
     else:
         n = 0.50 / payout_ratio
 
-    # ROE 转换为百分数进行计算
+    # PR 算法本身要求 ROE 以整数百分比形态参与公式（如 15 代入计算）
     roe_pct = roe_decimal * 100
 
     # 终极市赚率公式
     pr = n * (pe / roe_pct)
-    return round(pr, 2)
+    return pr
 
 def _calc_conservative_dcf_proxy(eps_ttm, bvps):
     """
@@ -62,16 +63,16 @@ def _calc_conservative_dcf_proxy(eps_ttm, bvps):
 
     # 22.5 = 15 (合理市盈率) * 1.5 (合理市净率)
     intrinsic_value = (22.5 * eps_ttm * bvps) ** 0.5
-    return round(intrinsic_value, 2)
+    return intrinsic_value
 
-def _calc_price_to_dream(ps_ratio, revenue_growth_pct):
+def _calc_price_to_dream(ps_ratio, revenue_growth_decimal):
     """
     量化市梦率：市销率 / 营收增速百分比。
     类似 PEG，只不过把盈利换成了营收。数值越低，说明“梦想”越有支撑。
     """
-    if None in (ps_ratio, revenue_growth_pct) or revenue_growth_pct <= 0:
+    if None in (ps_ratio, revenue_growth_decimal) or revenue_growth_decimal <= 0:
         return None
-    return round(ps_ratio / revenue_growth_pct, 2)
+    return ps_ratio / revenue_growth_decimal
 
 def _calc_altman_z_score(row, market_cap):
     """计算 Altman Z-Score (非制造企业版四变量模型)"""
@@ -95,7 +96,7 @@ def _calc_altman_z_score(row, market_cap):
         return None
 
     z_score = 6.56 * x1 + 3.26 * x2 + 6.72 * x3 + 1.05 * x4
-    return round(z_score, 2)
+    return z_score
 
 def _get_quarter_string(date_str):
     """将日期转换为财报季度字符串，例如 '2025-Q3'"""
@@ -103,19 +104,54 @@ def _get_quarter_string(date_str):
     quarter = (dt.month - 1) // 3 + 1
     return f"{dt.year}-Q{quarter}"
 
-def _process_financial_statements(inc_file: Path, bal_file: Path, market_cap: float, is_annual: bool = True) -> list:
+def _safe_growth_rate(current, previous):
     """
-    通用财务数据处理器：合并利润表和资产负债表，计算核心指标，返回格式化的列表。
+    计算安全的增长率，完美处理前一期盈利为负数的数学扭曲陷阱。
+    公式: (本期 - 前期) / abs(前期)
     """
+    if pd.isna(current) or pd.isna(previous) or previous == 0:
+        return None
+    return float((current - previous) / abs(previous))
+
+def _process_financial_statements(inc_file: Path, bal_file: Path, cash_file: Path, market_cap: float, is_annual: bool = True) -> list:
+    """
+    通用财务数据处理器：合并利润表和资产负债表以及现金流表，计算核心指标，返回格式化的列表。
+    """
+    # 利润表和资产负债表是底线，必须有；现金流量表改为可选
     if not inc_file.exists() or not bal_file.exists():
         return []
 
     df_inc = pd.read_csv(inc_file)
     df_bal = pd.read_csv(bal_file)
 
-    # 以外连接合并，确保日期对齐
+    # 先以外连接合并利润表和资产负债表
     df_merged = pd.merge(df_inc, df_bal, on='Date', how='outer')
+
+    # 容错处理：如果现金流量表存在，则合并；如果不存在，安全跳过
+    if cash_file.exists():
+        df_cash = pd.read_csv(cash_file)
+        df_merged = pd.merge(df_merged, df_cash, on='Date', how='outer')
+    else:
+        # 如果是季报缺失现金流，稍微打印一句提示即可
+        period_type = "年报" if is_annual else "季报"
+        print(f"   ⚠️ 提示: 缺失 {period_type}现金流量表 ({cash_file.name})，相关现金流指标将为空。")
+
     df_merged.sort_values('Date', ascending=False, inplace=True) # 时间倒序
+
+    # 提前提取绝对数值序列，并向下偏移(shift)获取历史参照值
+    rev_series = _safe_get_col(df_merged, ['Total Revenue', 'Operating Revenue'])
+    # 优先取归母净利润，没有则取总净利
+    net_common_series = _safe_get_col(df_merged, ['Net Income Common Stockholders', 'Net Income Applicable To Common Shares', 'Net Income'])
+    net_income_series = _safe_get_col(df_merged, ['Net Income'])
+    ocf_series = _safe_get_col(df_merged, ['Operating Cash Flow', 'Total Cash From Operating Activities', 'Cash Flow From Continuing Operating Activities', 'Net Cash Provided By Operating Activities'])
+
+    # 历史便宜量：上一期 (向下 1 行)
+    rev_prev_1 = rev_series.shift(-1)
+    net_common_prev_1 = net_common_series.shift(-1)
+
+    # 历史便宜量：去年同期 (向下 4 行，仅供季报使用)
+    rev_prev_4 = rev_series.shift(-4) if not is_annual else None
+    net_common_prev_4 = net_common_series.shift(-4) if not is_annual else None
 
     reports_list = []
 
@@ -123,16 +159,19 @@ def _process_financial_statements(inc_file: Path, bal_file: Path, market_cap: fl
         date_str = str(row['Date'])[:10]
 
         # --- 基础财务数据提取 ---
-        revenue = _safe_get_col(df_merged, ['Total Revenue', 'Operating Revenue']).loc[idx]
+        revenue = rev_series.loc[idx]
+        net_to_common = net_common_series.loc[idx]
+        net_income = net_income_series.loc[idx]
+        operating_cash_flow = ocf_series.loc[idx]
+
         gross_profit = _safe_get_col(df_merged, ['Gross Profit']).loc[idx]
         operating_income = _safe_get_col(df_merged, ['Operating Income', 'EBIT']).loc[idx]
-        net_income = _safe_get_col(df_merged, ['Net Income', 'Net Income Common Stockholders']).loc[idx]
         total_equity = _safe_get_col(df_merged, ['Stockholders Equity', 'Total Equity Gross Minority Interest']).loc[idx]
         current_assets = _safe_get_col(df_merged, ['Current Assets', 'Total Current Assets']).loc[idx]
         current_liabilities = _safe_get_col(df_merged, ['Current Liabilities', 'Total Current Liabilities']).loc[idx]
         total_liabilities = _safe_get_col(df_merged, ['Total Liabilities Net Minority Interest', 'Total Liabilities']).loc[idx]
 
-        # --- 比率计算 ---
+        ## --- 1. 比率计算 (Profitability & Efficiency) ---
         gross_margin = _safe_div(gross_profit, revenue)
         op_margin = _safe_div(operating_income, revenue)
         net_margin = _safe_div(net_income, revenue)
@@ -140,24 +179,55 @@ def _process_financial_statements(inc_file: Path, bal_file: Path, market_cap: fl
         current_ratio = _safe_div(current_assets, current_liabilities)
         debt_to_equity = _safe_div(total_liabilities, total_equity)
 
+        # 造假排雷指标：净利润现金含量
+        net_income_cash_content = _safe_div(operating_cash_flow, net_income)
+
         # Z-Score
         z_score = _calc_altman_z_score(row, market_cap) if market_cap else None
 
-        # --- 组装单期报告 ---
+        # --- 2. 成长性跨期计算 (Growth) ---
+        if is_annual:
+            # 年报：只有 YoY (同比)
+            rev_yoy = _safe_growth_rate(revenue, rev_prev_1.loc[idx])
+            net_yoy = _safe_growth_rate(net_to_common, net_common_prev_1.loc[idx])
+            rev_qoq, net_qoq = None, None
+        else:
+            # 季报：QoQ (环比) 找上一行，YoY (同比) 找上四行
+            rev_qoq = _safe_growth_rate(revenue, rev_prev_1.loc[idx])
+            net_qoq = _safe_growth_rate(net_to_common, net_common_prev_1.loc[idx])
+            rev_yoy = _safe_growth_rate(revenue, rev_prev_4.loc[idx])
+            net_yoy = _safe_growth_rate(net_to_common, net_common_prev_4.loc[idx])
+
+        # --- 3. 组装单期报告 (JSON 乐高模块) ---
         report = {
             "report_period": date_str,
+            # 绝对规模指标 (防伪存真)
+            "absolute_metrics": {
+                "total_revenue": revenue if pd.notna(revenue) else None,
+                "net_income": net_income if pd.notna(net_income) else None,
+                "net_income_to_common": net_to_common if pd.notna(net_to_common) else None,
+                "operating_cash_flow": operating_cash_flow if pd.notna(operating_cash_flow) else None
+            },
+            # 成长性指标 (戴维斯双击的引擎)
+            "growth": {
+                "revenue_yoy_ratio": rev_yoy,
+                "net_income_yoy_ratio": net_yoy,
+                "revenue_qoq_ratio": rev_qoq,
+                "net_income_qoq_ratio": net_qoq
+            },
             "profitability": {
-                "gross_margin_pct": round(gross_margin * 100, 2) if gross_margin else None,
-                "operating_margin_pct": round(op_margin * 100, 2) if op_margin else None,
-                "net_margin_pct": round(net_margin * 100, 2) if net_margin else None
+                "gross_margin_ratio": gross_margin,
+                "operating_margin_ratio": op_margin,
+                "net_margin_ratio": net_margin
             },
             "efficiency": {
-                "roe_pct": round(roe * 100, 2) if roe else None
+                "roe_ratio": roe
             },
             "risk_and_cashflow": {
-                "debt_to_equity": round(debt_to_equity, 2) if debt_to_equity else None,
-                "current_ratio": round(current_ratio, 2) if current_ratio else None,
-                "altman_z_score": z_score
+                "debt_to_equity": debt_to_equity,
+                "current_ratio": current_ratio,
+                "altman_z_score": z_score,
+                "net_income_cash_content_ratio": net_income_cash_content
             }
         }
 
@@ -195,12 +265,14 @@ def generate_fundamental_analysis(ticker_symbol: str) -> dict:
     # 2. 调用通用处理器，生成年报列表
     a_inc_file = FINANCIALS_DIR / f"{ticker_symbol}_annual_income.csv"
     a_bal_file = FINANCIALS_DIR / f"{ticker_symbol}_annual_balance.csv"
-    fundamentals["annual_reports"] = _process_financial_statements(a_inc_file, a_bal_file, market_cap, is_annual=True)
+    a_cash_file = FINANCIALS_DIR / f"{ticker_symbol}_annual_cashflow.csv"
+    fundamentals["annual_reports"] = _process_financial_statements(a_inc_file, a_bal_file, a_cash_file, market_cap, is_annual=True)
 
     # 3. 调用通用处理器，生成季报列表
     q_inc_file = FINANCIALS_DIR / f"{ticker_symbol}_quarterly_income.csv"
     q_bal_file = FINANCIALS_DIR / f"{ticker_symbol}_quarterly_balance.csv"
-    fundamentals["quarterly_reports"] = _process_financial_statements(q_inc_file, q_bal_file, market_cap, is_annual=False)
+    q_cash_file = FINANCIALS_DIR / f"{ticker_symbol}_quarterly_cashflow.csv"
+    fundamentals["quarterly_reports"] = _process_financial_statements(q_inc_file, q_bal_file, q_cash_file, market_cap, is_annual=False)
 
     # 4. 在最新的年报中注入静态估值指标 (包含你独创的三大核心指标)
     if fundamentals["annual_reports"]:
@@ -208,8 +280,7 @@ def generate_fundamental_analysis(ticker_symbol: str) -> dict:
 
         # 提取基础组件以计算高阶指标
         pe_ttm = info_data.get('trailingPE')
-        roe_pct = latest_report.get("efficiency", {}).get("roe_pct")
-        roe_decimal = roe_pct / 100 if roe_pct else None
+        roe_decimal = latest_report.get("efficiency", {}).get("roe_ratio")
         payout_ratio = info_data.get('payoutRatio', 0)
 
         eps = info_data.get('trailingEps')
@@ -221,7 +292,7 @@ def generate_fundamental_analysis(ticker_symbol: str) -> dict:
         # 计算三大高阶指标
         adjusted_pr = _calc_adjusted_pr(pe_ttm, roe_decimal, payout_ratio)
         intrinsic_val = _calc_conservative_dcf_proxy(eps, bvps)
-        price_to_dream = _calc_price_to_dream(ps_ratio, rev_growth * 100 if rev_growth else None)
+        price_to_dream = _calc_price_to_dream(ps_ratio, rev_growth if rev_growth else None)
 
         latest_report["valuation"] = {
             "pe_ttm": pe_ttm,
