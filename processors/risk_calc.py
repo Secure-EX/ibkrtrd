@@ -1,13 +1,15 @@
 import os
 import sys
 import glob
+import json
 import pandas as pd
 from pathlib import Path
-from config import PORTFOLIO_DIR, LATEST_DIR
 
 # 为了确保在终端里直接运行此文件也能找到根目录的 config.py，需要将项目根目录加入 sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(BASE_DIR))
+
+from config import PORTFOLIO_DIR, LATEST_DIR
 
 def _get_latest_file(directory: Path, prefix: str) -> Path:
     """
@@ -66,7 +68,7 @@ def generate_portfolio_risk_report() -> dict:
     cash_ratio = total_cash / net_liq
 
     # 注意：因为我们新的汇率矩阵表里没有抓取 MaintMarginReq（维持保证金），
-    # 这里暂时将其置为 0。如果未来你需要精确的杠杆率监控，我们可以再加回来。
+    # 这里暂时将其置为 0。如果未来需要精确的杠杆率监控，我们可以再加回来。
     margin_utilization = 0.0
     # margin_utilization = maint_margin / net_liq # 保证金占用率 (越接近 1 越容易爆仓)
     
@@ -94,35 +96,34 @@ def generate_portfolio_risk_report() -> dict:
 
             unrealized_pnl_local = _safe_float(row['Unrealized P&L'])
             market_val_local = _safe_float(row['Market Value'])
-            weight = _safe_float(row['% of Net Liq'])
-            pnl_pct = _safe_float(row['Unrealized P&L %'])
+            weight = _safe_float(row['Net Liq Ratio'])
+            pnl_ratio = _safe_float(row['Unrealized P&L Ratio'])
 
             # 核心折算：将原生币种的盈亏和市值，乘上汇率转换为加币
             total_unrealized_pnl_base += (unrealized_pnl_local * fx)
             total_stock_exposure_base += (market_val_local * fx)
 
-            # 记录重仓股 (占比超过 5% 即视为主要持仓)
-            if weight >= 0.05:
+            # 记录重仓股 (占比超过 15% 即视为主要持仓)
+            if weight >= 0.15:
                 top_holdings.append({
                     "symbol": symbol,
-                    "weight_pct": round(weight, 4),
-                    "unrealized_pnl_pct": round(pnl_pct, 4)
+                    "weight_ratio": weight,
+                    "unrealized_pnl_ratio": pnl_ratio
                 })
 
             # 区分赚钱和亏钱的票，收集盈亏百分比用于算赔率
             if unrealized_pnl_local > 0:
-                winners.append(pnl_pct)
+                winners.append(pnl_ratio)
             elif unrealized_pnl_local < 0:
-                losers.append(pnl_pct)
+                losers.append(pnl_ratio)
                 
     # 计算当前胜率与赔率 (基于未结平仓的浮动盈亏)
     win_rate = len(winners) / total_positions if total_positions > 0 else 0.0
-    
-    avg_win_pct = (sum(winners) / len(winners)) if len(winners) > 0 else 0.0
-    avg_loss_pct = (abs(sum(losers)) / len(losers)) if len(losers) > 0 else 0.0
+    avg_win_ratio = (sum(winners) / len(winners)) if len(winners) > 0 else 0.0
+    avg_loss_ratio = (abs(sum(losers)) / len(losers)) if len(losers) > 0 else 0.0
     
     # 赔率 (Profit Factor / 盈亏比) = 平均盈利幅度 / 平均亏损幅度
-    odds = (avg_win_pct / avg_loss_pct) if avg_loss_pct > 0 else (99.9 if avg_win_pct > 0 else 0.0)
+    odds = (avg_win_ratio / avg_loss_ratio) if avg_loss_ratio > 0 else (99.9 if avg_win_ratio > 0 else 0.0)
 
     # ==========================================
     # 3. 极限压力测试 (Stress Test)
@@ -131,39 +132,39 @@ def generate_portfolio_risk_report() -> dict:
     # 这是一种极度保守的尾部风险评估法 (Value at Risk 简易替代)
     # 分子(股票总暴露) 和 分母(总净值) 现在都是纯粹的 CAD 加币！
     stress_test_drawdown_value = total_stock_exposure_base * 0.20
-    max_drawdown_impact_pct = (stress_test_drawdown_value / net_liq)
+    max_drawdown_impact_ratio = (stress_test_drawdown_value / net_liq)
 
     # ==========================================
     # 4. 组装风控 JSON
     # ==========================================
     risk_report = {
         "portfolio_summary": {
-            "net_liquidation": round(net_liq, 2),
-            "total_cash": round(total_cash, 2),
-            "cash_ratio_pct": round(cash_ratio, 2),
-            "margin_utilization_pct": round(margin_utilization, 2),
-            "total_unrealized_pnl": round(total_unrealized_pnl_base, 2)
+            "base_currency": "CAD",
+            "net_liquidation": net_liq,
+            "total_cash": total_cash,
+            "cash_ratio": cash_ratio,
+            "margin_utilization_ratio": margin_utilization,
+            "total_unrealized_pnl": total_unrealized_pnl_base
         },
         "performance_metrics": {
             "total_positions_count": total_positions,
-            "win_rate_pct": round(win_rate, 4),
-            "average_win_pct": round(avg_win_pct, 4),
-            "average_loss_pct": round(avg_loss_pct, 4),
-            "current_odds_ratio": round(odds, 4) # 你的盈亏比
+            "win_rate_ratio": win_rate,
+            "average_win_ratio": avg_win_ratio,
+            "average_loss_ratio": avg_loss_ratio,
+            "current_odds_ratio": odds
         },
         "concentration_and_stress": {
             "top_holdings": top_holdings,
-            "stress_test_20pct_drop_impact_pct": round(max_drawdown_impact_pct, 2) # 核心回撤指标
+            "stress_test_20pct_drop_impact_ratio": max_drawdown_impact_ratio
         }
     }
     
     # 落盘保存为组合级风控报告
     risk_file_path = LATEST_DIR / "portfolio_risk.json"
     with open(risk_file_path, 'w', encoding='utf-8') as f:
-        import json
         json.dump(risk_report, f, indent=4, ensure_ascii=False)
         
-    print(f"✅ 风控计算完成！(账户净值: {round(net_liq, 2)}, 维持保证金占用: {round(margin_utilization*100, 2)}%)")
+    print(f"✅ 风控计算完成！(账户净值: {round(net_liq, 2)} CAD, 维持保证金占用: {round(margin_utilization*100, 2)}%)")
     print(f"✅ 账户级风控报告已保存至: {risk_file_path.name}")
     
     return risk_report
@@ -172,7 +173,6 @@ def generate_portfolio_risk_report() -> dict:
 # 测试模块
 # ==========================================
 if __name__ == "__main__":
-    import json
     report = generate_portfolio_risk_report()
     if report:
         print("\n最终输出的组合风控 JSON 结构片段:")

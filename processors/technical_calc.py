@@ -82,7 +82,7 @@ def _extract_latest_features(df: pd.DataFrame) -> dict:
     # 获取日期字符串
     date_str = latest.name.strftime('%Y-%m-%d') if isinstance(latest.name, pd.Timestamp) else str(latest.name)
 
-    # 🌟 动态获取布林带的真实列名
+    # 动态获取布林带的真实列名
     col_bbu = _get_dynamic_col(df, 'BBU_')
     col_bbm = _get_dynamic_col(df, 'BBM_')
     col_bbl = _get_dynamic_col(df, 'BBL_')
@@ -111,7 +111,7 @@ def _extract_latest_features(df: pd.DataFrame) -> dict:
             "kdj_j": _safe_get(latest, 'J_9_3')
         },
         "volatility": {
-            # 🌟 使用动态获取到的列名进行安全提取
+            # 使用动态获取到的列名进行安全提取
             "boll_upper": _safe_get(latest, col_bbu) if col_bbu else None,
             "boll_mid": _safe_get(latest, col_bbm) if col_bbm else None,
             "boll_lower": _safe_get(latest, col_bbl) if col_bbl else None
