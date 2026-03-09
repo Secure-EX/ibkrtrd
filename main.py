@@ -1,65 +1,123 @@
-import pandas as pd
-# 导入配置和模块
-from config import PORTFOLIO_DIR, TRANSACTIONS_DIR, MARKET_DIR, STOCK_DIR, FUNDAMENTAL_DIR, EMOTIONAL_DIR, TECHNICAL_DIR, RISK_DIR, SUMMARY_DIR, ACCOUNT_ID
-from data_pull.data_pull import IBKRClient
-from processors.technical_calc import LocalAnalyzer
-from processors.fundamental_calc import get_valuation_metrics
+import sys
+import time
+from pathlib import Path
+
+# ==========================================
+# 提升项目根目录优先级，确保能导入所有模块
+# ==========================================
+BASE_DIR = Path(__file__).resolve().parent
+sys.path.append(str(BASE_DIR))
+
+# [1] 数据拉取层 (Extract)
+from data_pull.ibkr_api import pull_all_ibkr_data
+from data_pull.yfinance_api import fetch_financials
+from data_pull.akshare_api import fetch_hk_ohlcv
+
+# [2] 数据处理和分析层 (Transform & Calculate)
+# 整合在json_assembler里面了
+# from processors.fundamental_calc import generate_fundamental_analysis
+# 整合在json_assembler里面了
+# from processors.technical_calc import generate_technical_analysis
+from processors.risk_calc import generate_portfolio_risk_report
+from processors.json_assembler import assemble_llm_payload
+
+# [3] 报告与 Prompt 生成层 (Load & Output)
+from llm_report.prompt_template import generate_consolidated_api_prompt
 
 def main():
-    # 1. 初始化连接
-    client = IBKRClient()
-    client.connect()
+    print("🌟" + "="*50 + "🌟")
+    print("      启动终极量化投研流水线 (Quant Pipeline)")
+    print("🌟" + "="*50 + "🌟\n")
 
+    # ---------------------------------------------------------
+    # 第一阶段：账户与风控全局扫描
+    # ---------------------------------------------------------
     try:
-        # --- 任务 A: 分析个股 (腾讯) ---
-        symbol_ib = "700"      # IBKR 代码
-        symbol_yf = "0700.HK"  # Yahoo 代码
+        # 1. 连接盈透，拉取最新持仓和资产
+        ibkr_data, symbols_for_yf = pull_all_ibkr_data()
+    except Exception as e:
+        print(f"\n❌ 致命错误: IBKR 数据拉取失败，流水线终止。({e})")
+        return
 
-        # 2. 拉取数据
-        df = client.get_hk_stock_data(symbol_ib)
+    if not ibkr_data:
+        print("\n⚠️ 账户当前无持仓数据，流水线安全结束。")
+        return
 
-        if df is not None:
-            # 3. 保存原始数据到 CSV (使用 config 中定义的路径)
-            csv_path = STOCK_DIR / "stock_data_700.csv"
-            df.to_csv(csv_path)
-            print(f"💾 数据已保存至: {csv_path}")
+    # 2. 生成全局风控报告 (portfolio_risk.json)
+    try:
+        generate_portfolio_risk_report()
+    except Exception as e:
+        print(f"\n❌ 风控计算发生错误: {e}")
 
-            # 4. 技术分析
-            tech_analyzer = LocalAnalyzer(df)
-            tech_analyzer.add_indicators()
-            trend = tech_analyzer.analyze_trend()
-            val_status, val_score = tech_analyzer.analyze_valuation_technical()
-            decision, reasons = tech_analyzer.generate_signal()
+    # ---------------------------------------------------------
+    # 第二阶段：持仓标的逐个击破 (自动批处理)
+    # ---------------------------------------------------------
+    print("\n🎯 账户扫描完毕，开始批量生成单股深度分析报告...\n")
 
-            # 5. 基本面分析
-            fund_data = get_valuation_metrics(symbol_yf)
+    # 获取去重后的持仓列表，防止由于分批买入导致同一只股票重复跑
+    unique_holdings = {item['Symbol']: item for item in ibkr_data}.values()
 
-            # 6. 打印报告
-            print("\n" + "="*40)
-            print(f"📊 综合分析报告: 腾讯控股 ({symbol_yf})")
-            print("="*40)
-            print(f"1️⃣ 走势: {trend}")
-            print(f"2️⃣ 技术估值: {val_status} ({val_score})")
-            print(f"3️⃣ 基本面: PE={fund_data['PE']}, PB={fund_data['PB']}")
-            print(f"4️⃣ 信号: {reasons}")
-            print(f"🚦 建议: 【{decision}】")
-            print("="*40)
+    for item in unique_holdings:
+        raw_symbol = str(item['Symbol'])
+        currency = item['Currency']
+        company_name = item.get('Company Name (EN)', 'Unknown')
 
-        # --- 任务 B: 获取持仓 ---
-        my_portfolio = client.???(account_id=ACCOUNT_ID)
-        if not my_portfolio.empty:
-            # 保存持仓数据
-            port_path = PORTFOLIO_DIR / "portfolio_data.csv"
-            my_portfolio.to_csv(port_path, index=False)
-            print(f"\n💼 持仓数据已保存至: {port_path}")
-            print(my_portfolio)
+        # 智能代码转换器：抹平各大 API 之间的代码差异
+        # 盈透(700) -> 雅虎/Akshare(0700.HK)
+        if currency == 'HKD':
+            # 港股必须是 4 位数字加 .HK
+            standard_symbol = raw_symbol.zfill(4) + ".HK"
         else:
-            print("\n💼 当前账户无持仓")
+            # 如果你未来买了美股 (如 AAPL)，直接使用原代码
+            standard_symbol = raw_symbol
 
-    except KeyboardInterrupt:
-        print("程序被手动中断")
-    finally:
-        client.disconnect()
+        print(f"\n" + "▼"*50)
+        print(f"  🚀 开始处理: {standard_symbol} ({company_name})")
+        print("▲"*50)
+
+        try:
+            # --- 1. 数据拉取层 (Extract) ---
+            print(f"   ▶ [1/3] 拉取历史量价数据 (AkShare)...")
+            if currency == 'HKD':
+                fetch_hk_ohlcv(standard_symbol)
+            else:
+                print(f"   ⚠️ 提示: {standard_symbol} 非港股，跳过 AkShare 抓取。")
+
+            time.sleep(1.5) # 🛡️ 防封锁休眠
+
+            print(f"   ▶ [2/3] 拉取财务基本面三表 (Yahoo Finance)...")
+            fetch_financials(standard_symbol)
+
+            time.sleep(2) # 🛡️ 防封锁休眠
+
+            # --- 2. 组装与输出层 (Load & Output) ---
+            print(f"   ▶ [3/3] 组装终极 LLM 数据载荷 (JSON)...")
+            assemble_llm_payload(standard_symbol)
+
+            print(f"   ✅ {standard_symbol} 专属研报材料准备就绪！")
+
+        except Exception as e:
+            # 如果某一只股票拉取失败（例如停牌、没发财报），打印错误并继续处理下一只，绝不让整个流水线崩溃
+            print(f"   ❌ {standard_symbol} 处理过程中发生异常: {e}")
+            continue
+
+    # ---------------------------------------------------------
+    # 第三阶段：终极聚合 (Consolidate into API Prompt)
+    # ---------------------------------------------------------
+    print("\n【第三阶段】合成终极 API Prompt...")
+    try:
+        generate_consolidated_api_prompt()
+    except Exception as e:
+        print(f"❌ 终极聚合失败: {e}")
+
+    # ---------------------------------------------------------
+    # 大功告成
+    # ---------------------------------------------------------
+    print("\n" + "="*54)
+    print("🎉 全量化流水线执行完毕！")
+    print("📁 所有的 Prompt 文本已经静静地躺在 data/latest 目录下了。")
+    print("👉 下一步：尽情把它们发给大模型，检验我们的火力吧！")
+    print("="*54 + "\n")
 
 if __name__ == "__main__":
     main()

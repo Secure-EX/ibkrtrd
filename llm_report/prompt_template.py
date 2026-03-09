@@ -1,0 +1,119 @@
+import sys
+import json
+import glob
+import os
+import pandas as pd
+from pathlib import Path
+from datetime import datetime
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(BASE_DIR))
+
+from config import LATEST_DIR, PORTFOLIO_DIR
+
+USER_NOTES_FILE = BASE_DIR / "user_notes.json"
+
+def _load_user_notes():
+    """安全读取用户外部备忘录"""
+    if USER_NOTES_FILE.exists():
+        with open(USER_NOTES_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+def _get_latest_file(directory: Path, prefix: str) -> Path:
+    search_pattern = str(directory / f"{prefix}*.csv")
+    files = glob.glob(search_pattern)
+    return Path(max(files, key=os.path.getmtime)) if files else None
+
+def generate_consolidated_api_prompt() -> str:
+    """将全局账户、所有持仓明细和所有个股切片，合并为单个 API-ready 的 JSON"""
+    print("\n📦 正在聚合全量数据，生成终极 API Prompt...")
+
+    today_str = datetime.now().strftime("%Y%m%d")
+
+    # 动态加载外部备忘录
+    user_notes_dict = _load_user_notes()
+
+    # ==========================================
+    # 1. 组装全局上下文 (Global Context)
+    # ==========================================
+    global_context = {
+        "portfolio_risk_report": {},
+        "current_all_positions": []
+    }
+
+    # 读风控
+    risk_file = LATEST_DIR / "portfolio_risk.json"
+    if risk_file.exists():
+        with open(risk_file, 'r', encoding='utf-8') as f:
+            global_context["portfolio_risk_report"] = json.load(f)
+
+    # 读全局持仓表 (一次性喂给大模型所有的持仓成本和比例，个股里就不用再传了)
+    positions_file = _get_latest_file(PORTFOLIO_DIR, "current_positions_")
+    if positions_file:
+        df_pos = pd.read_csv(positions_file)
+        # 用我们刚写的过滤器清洗一下浮点数，直接转字典
+        from processors.json_assembler import sanitize_for_web
+        global_context["current_all_positions"] = sanitize_for_web(df_pos.to_dict(orient='records'))
+
+    # ==========================================
+    # 2. 聚合并挂载所有个股切片 (Stock Queue)
+    # ==========================================
+    stock_analysis_queue = []
+
+    # 扫描所有生成的 Payload JSON
+    payload_files = glob.glob(str(LATEST_DIR / "*_LLM_Payload.json"))
+    for file_path in payload_files:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            stock_data = json.load(f)
+
+            ticker = stock_data['meta']['ticker']
+            ibkr_symbol = ticker.split('.')[0].lstrip('0') if '.' in ticker else ticker
+            note = user_notes_dict.get(ibkr_symbol, "无特定主观备注。")
+
+            stock_analysis_queue.append({
+                "target_ticker": ticker,
+                "user_subjective_note": note,
+                "quantitative_payload": stock_data
+            })
+
+    # ==========================================
+    # 3. 终极 API Prompt 结构 (System + Context + Data + Task)
+    # ==========================================
+    master_prompt = {
+        "instructions": {
+            "task": "港股股票持仓深度分析和配置建议",
+            "role": "你是一位华尔街顶级的资深金融分析师与量化投资组合经理",
+            "language": "中文",
+            "objective": "你需要对下方提供的结构化量化数据进行深度拆解，根据用户提供的持仓数据和风险偏好，提供盈亏分析、风险评估及操作建议，并输出一份极其专业的中文分析报告",
+            "note": "如果任何数据不可得，必须标注来源并说明假设。Strictly follow this structure in the analysis framework."
+        },
+        "user_profile": {
+            "investment_style": "稳健增长型",
+            "risk_tolerance": "高 (可承受账户总净值 30% 的回撤)",
+            "time_horizon": "长期 (3-5年)",
+            "investment_goal": "年化 15%-20%"
+        },
+        "global_portfolio_context": global_context,
+        "stocks_analysis_queue": stock_analysis_queue,
+        "analysis_requirements": [
+            "请严格遵循以下框架使用“马斯克的第一性原理 Elon Musk's First Principles”进行输出，一定要制作狗都能读得懂得报告：",
+            "1. 资产核心状态速览: 评估全局账户安全度，及各个标的的仓位健康度。",
+            "2. 每只股票的基本面与估值穿透: 重点评估市赚率(price_to_earnings_to_roe_pr)及净利润现金含量(防造假)。",
+            "3. 每只股票的技术面与多周期共振: 结合日/周/月线判断支撑阻力与当前动能。",
+            "4. 指出组合中最大的潜在风险点：如果股市强烈回调20%会发生什么",
+            "5. 牛熊指引：如果一切顺利，股价能到多少？逻辑是什么？如果风险爆发，股价底线在哪里？",
+            "6. 最终决断与操作计划: 基于用户的特定备忘录和全局资金，给出明确的【加仓/减仓/持有/止损】建议（需精确到参考价位和数量比例）。"
+        ]
+    }
+
+    # 落盘为统一的 JSON 文件
+    output_path = LATEST_DIR / f"prompt_{today_str}.json"
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(master_prompt, f, indent=4, ensure_ascii=False)
+
+    print(f"✅ 终极 API 聚合完毕！仅需发送此单一文件至大模型: {output_path.name}")
+    return master_prompt
+
+if __name__ == "__main__":
+    generate_consolidated_api_prompt()

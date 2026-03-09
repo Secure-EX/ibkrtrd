@@ -20,6 +20,7 @@ venv/
 
 # === 5. 敏感信息 ===
 .env
+user_notes.json
 
 # === 6. 测试文件 ===
 test.py

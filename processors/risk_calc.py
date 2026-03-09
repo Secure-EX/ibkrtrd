@@ -7,7 +7,7 @@ from pathlib import Path
 
 # 为了确保在终端里直接运行此文件也能找到根目录的 config.py，需要将项目根目录加入 sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
-sys.path.append(str(BASE_DIR))
+sys.path.insert(0, str(BASE_DIR))
 
 from config import PORTFOLIO_DIR, LATEST_DIR
 

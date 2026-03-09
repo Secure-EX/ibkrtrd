@@ -6,7 +6,7 @@ from pathlib import Path
 
 # 为了确保在终端里直接运行此文件也能找到根目录的 config.py，需要将项目根目录加入 sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
-sys.path.append(str(BASE_DIR))
+sys.path.insert(0, str(BASE_DIR))
 
 from config import OHLCV_DIR
 
@@ -58,7 +58,7 @@ def _safe_get(row: pd.Series, col_name: str, is_int: bool = False):
     val = row[col_name]
     if is_int:
         return int(val)
-    return round(float(val), 2)
+    return float(val)
 
 def _get_dynamic_col(df: pd.DataFrame, prefix: str) -> str:
     """
@@ -147,8 +147,12 @@ def generate_technical_analysis(ticker_symbol: str) -> dict:
     # 3. 重采样计算周线 (Weekly - 以周五为界)
     # Open 取本周第一天，Close 取本周最后一天，Volume 和 Value 求和
     agg_dict = {
-        'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last',
-        'Volume': 'sum', 'Turnover_Value': 'sum'
+        'Open': 'first',
+        'High': 'max',
+        'Low': 'min',
+        'Close': 'last',
+        'Volume': 'sum',
+        'Turnover_Value': 'sum'
     }
     # 使用 'W-FRI' 确保周线的日期标签总是落在周五
     df_weekly = df_daily.resample('W-FRI').agg(agg_dict).dropna(subset=['Close'])

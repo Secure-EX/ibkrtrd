@@ -6,7 +6,7 @@ from datetime import datetime
 
 # 为了确保在终端里直接运行此文件也能找到根目录的 config.py，需要将项目根目录加入 sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
-sys.path.append(str(BASE_DIR))
+sys.path.insert(0, str(BASE_DIR))
 
 from config import FINANCIALS_DIR
 
@@ -274,7 +274,7 @@ def generate_fundamental_analysis(ticker_symbol: str) -> dict:
     q_cash_file = FINANCIALS_DIR / f"{ticker_symbol}_quarterly_cashflow.csv"
     fundamentals["quarterly_reports"] = _process_financial_statements(q_inc_file, q_bal_file, q_cash_file, market_cap, is_annual=False)
 
-    # 4. 在最新的年报中注入静态估值指标 (包含你独创的三大核心指标)
+    # 4. 在最新的年报中注入静态估值指标与股息指标 (包含你独创的三大核心指标)
     if fundamentals["annual_reports"]:
         latest_report = fundamentals["annual_reports"][0]
 
@@ -294,6 +294,17 @@ def generate_fundamental_analysis(ticker_symbol: str) -> dict:
         intrinsic_val = _calc_conservative_dcf_proxy(eps, bvps)
         price_to_dream = _calc_price_to_dream(ps_ratio, rev_growth if rev_growth else None)
 
+        # 提取股息与分红数据 (如果前瞻股息没有，就用过去 12 个月的滚动股息)
+        # 雅虎的当前股息率通常是整数百分比形态 (如 0.0087 代表 0.87%%)，为了满足我们的 ratio 规则，除以 100
+        div_yield = info_data.get('dividendYield', info_data.get('trailingAnnualDividendYield'))
+        div_yield_ratio = (div_yield / 100) if div_yield else None
+        # 每股绝对分红金额
+        div_rate = info_data.get('dividendRate', info_data.get('trailingAnnualDividendRate'))
+
+        # 雅虎的五年平均股息通常是整数百分比形态 (如 0.0087 代表 0.87%%)，为了满足我们的 ratio 规则，除以 100
+        five_yr_avg_div = info_data.get('fiveYearAvgDividendYield')
+        five_yr_avg_div_ratio = (five_yr_avg_div / 100) if five_yr_avg_div else None
+
         latest_report["valuation"] = {
             "pe_ttm": pe_ttm,
             "pe_fwd": info_data.get('forwardPE'),
@@ -303,6 +314,14 @@ def generate_fundamental_analysis(ticker_symbol: str) -> dict:
             "dcf_intrinsic_value_proxy": intrinsic_val,       # 极其苛刻的格雷厄姆防守估值
             "price_to_earnings_to_roe_pr": adjusted_pr,       # 修正版市赚率
             "price_to_dream_ps_adjusted": price_to_dream      # 市梦率
+        }
+
+        # 将股息组件作为独立模块挂载到最近一期的财报中
+        latest_report["dividends"] = {
+            "dividend_yield_ratio": div_yield_ratio,              # 当前股息率 (如 0.0087 代表 0.87%)
+            "dividend_rate_per_share": div_rate,                  # 每股绝对分红金额
+            "five_year_avg_yield_ratio": five_yr_avg_div_ratio,   # 五年平均股息率 (用来判断当前股息是否具有吸引力)
+            "payout_ratio": payout_ratio                          # 派息比率 (用来判断分红是否吃老本)
         }
 
     print(f"✅ {ticker_symbol} 基本面数据清洗完成！包含 {len(fundamentals['annual_reports'])} 份年报, {len(fundamentals['quarterly_reports'])} 份季报。")

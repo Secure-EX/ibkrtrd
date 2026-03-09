@@ -6,7 +6,7 @@ from pathlib import Path
 
 # 为了确保在终端里直接运行此文件也能找到根目录的 config.py，需要将项目根目录加入 sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
-sys.path.append(str(BASE_DIR))
+sys.path.insert(0, str(BASE_DIR))
 
 from config import PORTFOLIO_DIR, IBKR_HOST, IBKR_PORT, CLIENT_ID, ACCOUNT_ID, TODAY_STR
 
@@ -223,12 +223,13 @@ def fetch_ibkr_base_data(ib, account_id):
 # ==========================================
 def pull_all_ibkr_data():
     ib = IB()
+    result = ([], []) # 提前设定一个默认的空值兜底，防止异常时返回 None
     try:
         ib.connect(IBKR_HOST, IBKR_PORT, clientId=CLIENT_ID, readonly=True)
         print("✅ 成功连接至 IBKR TWS/Gateway!")
 
-        # 拉取并保存核心持仓
-        fetch_ibkr_base_data(ib, ACCOUNT_ID)
+        # 🌟 致命修复：接收底层函数的返回值，并赋给 result
+        result = fetch_ibkr_base_data(ib, ACCOUNT_ID)
 
     except ConnectionRefusedError:
         print(f"❌ 连接 IBKR 失败：请检查 TWS/Gateway 是否已打开，且 API 端口（{IBKR_PORT}）设置正确。")
@@ -238,6 +239,9 @@ def pull_all_ibkr_data():
         if ib.isConnected():
             ib.disconnect()
             print("\n🔌 IBKR 连接已安全断开。")
+
+    # 把结果作为接力棒，正式交还给上层调用者 (main.py)
+    return result
 
 if __name__ == "__main__":
     pull_all_ibkr_data()
