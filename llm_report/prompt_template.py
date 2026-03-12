@@ -97,13 +97,13 @@ def generate_consolidated_api_prompt() -> str:
         "global_portfolio_context": global_context,
         "stocks_analysis_queue": stock_analysis_queue,
         "analysis_requirements": [
-            "请严格遵循以下框架使用“马斯克的第一性原理 Elon Musk's First Principles”进行输出，一定要制作狗都能读得懂得报告：",
+            "请严格遵循以下框架使用“马斯克的第一性原理 Elon Musk's First Principles”进行输出，每一个分析内容都需要分成专业角度和狗都能看懂的角度进行输出：",
             "1. 资产核心状态速览: 评估全局账户安全度，及各个标的的仓位健康度。",
             "2. 每只股票的基本面与估值穿透: 重点评估市赚率(price_to_earnings_to_roe_pr)及净利润现金含量(防造假)。",
             "3. 每只股票的技术面与多周期共振: 结合日/周/月线判断支撑阻力与当前动能。",
             "4. 指出组合中最大的潜在风险点：如果股市强烈回调20%会发生什么",
             "5. 牛熊指引：如果一切顺利，股价能到多少？逻辑是什么？如果风险爆发，股价底线在哪里？",
-            "6. 最终决断与操作计划: 基于用户的特定备忘录和全局资金，给出明确的【加仓/减仓/持有/止损】建议（需精确到参考价位和数量比例）。"
+            "6. 最终决断与操作计划: 基于用户的特定备忘录和全局资金，给出明确的[加仓/减仓/持有/止损]建议（需精确到参考价位和数量比例）。"
         ]
     }
 
@@ -112,7 +112,49 @@ def generate_consolidated_api_prompt() -> str:
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(master_prompt, f, indent=4, ensure_ascii=False)
 
+    # ==========================================
+    # 4. 网页端投喂切片器 (Web Prompt Splitter) - Optional
+    # ==========================================
+    web_dir = LATEST_DIR / f"web_prompts_{today_str}"
+    web_dir.mkdir(exist_ok=True) # 创建专属切片文件夹
+
+    # --- 第 1 口：全局设定与任务 ---
+    global_slice = {
+        "instructions": master_prompt["instructions"],
+        "user_profile": master_prompt["user_profile"],
+        "global_portfolio_context": master_prompt["global_portfolio_context"],
+        "analysis_requirements": master_prompt["analysis_requirements"]
+    }
+    with open(web_dir / "01_全局设定与指令.txt", 'w', encoding='utf-8') as f:
+        f.write("[System Instructions & Global Context]\n")
+        f.write("请阅读以下全局设定、账户资金状态以及最终的分析任务要求：\n\n```json\n")
+        f.write(json.dumps(global_slice, indent=4, ensure_ascii=False))
+        f.write("\n```\n\n[重要指令]\n")
+        f.write("这是我的全局账户状态和你的分析任务。请回复：“收到，我已经清楚账户资金和风控底线。请提供个股数据，我将逐一进行极度深度的硬核拆解。”\n")
+        f.write("注意：在收到后续的个股数据前，请不要做任何分析！")
+
+    # --- 第 2 到 N 口：个股数据切片 ---
+    total_stocks = len(stock_analysis_queue)
+    for i, stock in enumerate(stock_analysis_queue):
+        ticker = stock['target_ticker']
+        safe_ticker = ticker.replace(":", "_")
+        with open(web_dir / f"02_{i+1:02d}_个股数据_{safe_ticker}.txt", 'w', encoding='utf-8') as f:
+            f.write(f"[Stock Data {i+1}/{total_stocks}]\n")
+            f.write(f"这是第 {i+1} 只股票的数据（{ticker}）。\n\n```json\n")
+            f.write(json.dumps(stock, indent=4, ensure_ascii=False))
+            f.write("\n```\n\n[重要指令]\n")
+            f.write("请严格按照刚才确认的框架要求，动用全部算力，不惜字数地对这只股票进行深度剖析（包括市赚率、现金流排雷、多周期技术面共振和牛熊推演等）。\n")
+            f.write("写完后，请提示我发送下一只股票的数据。")
+
+    # --- 最终口：终极决断 ---
+    with open(web_dir / "03_终极决断与操作计划.txt", 'w', encoding='utf-8') as f:
+        f.write("[Final Actionable Plan]\n")
+        f.write("所有标的已投喂完毕！\n\n[重要指令]\n")
+        f.write("现在，请你调取最初的“全局资金状态(Global Portfolio Context)”，结合你刚才进行的所有单股深度分析，给我出具一份包含明确股数、价位以及买卖逻辑的[最终操作计划表]。\n")
+        f.write("请确保总动用资金绝不超过我的可用现金，并且严格遵守马斯克的第一性原理。")
+
     print(f"✅ 终极 API 聚合完毕！仅需发送此单一文件至大模型: {output_path.name}")
+    print(f"📦 网页端投喂切片已生成至: {web_dir.name} (请按文件编号顺序复制给 AI 网页端)")
     return master_prompt
 
 if __name__ == "__main__":
