@@ -119,6 +119,8 @@ def fetch_ibkr_base_data(ib, account_id):
     tickers = {}
     pnls = {}
     names = {}
+    min_sizes = {}
+    min_ticks = {}
     symbols_for_yf = []
 
     # 2. 发起数据请求
@@ -132,6 +134,11 @@ def fetch_ibkr_base_data(ib, account_id):
 
         details = ib.reqContractDetails(contract)
         names[con_id] = details[0].longName if details else "N/A"
+
+        # 提取并保存一手股数(minSize)和最小跳动价位(minTick)
+        # 如果获取不到，默认给 1 股和 0.01 的精度兜底
+        min_sizes[con_id] = details[0].minSize if details else 1.0
+        min_ticks[con_id] = details[0].minTick if details else 0.01
 
         tickers[con_id] = ib.reqMktData(contract, snapshot=False)
         pnls[con_id] = ib.reqPnLSingle(account_id, "", con_id)
@@ -203,7 +210,10 @@ def fetch_ibkr_base_data(ib, account_id):
             "Cost Basis": position * avg_price,
             "Unrealized P&L": item.unrealizedPNL,
             "Unrealized P&L Ratio": (item.unrealizedPNL / (position * avg_price)) if (position * avg_price) > 0 else 0.0,
-            "Position": position
+            "Position": position,
+            # 挂载交易规则防拒单字段
+            "Board Lot": min_sizes.get(con_id, 1.0),
+            "Min Tick": min_ticks.get(con_id, 0.01)
         })
 
     # 6. 落盘当天的持仓快照
