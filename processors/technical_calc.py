@@ -14,6 +14,67 @@ from config import OHLCV_DIR
 # 核心计算函数
 # ==========================================
 
+def _calc_1y_risk_metrics(df: pd.DataFrame, risk_free_rate: float = 0.04) -> dict:
+    """
+    计算过去 1 年 (约 252 个交易日) 的核心风控指标：夏普比率与最大回撤，及 52 周水位。
+    假设无风险利率(Rf) 为 4% (0.04)。
+    """
+    if df.empty or len(df) < 20:
+        return {
+            "sharpe_ratio_1y": None,
+            "max_drawdown_1y_ratio": None,
+            "high_52w": None,
+            "low_52w": None,
+            "price_position_52w_ratio": None
+        }
+
+    # 取最近一年的数据切片 (约252个交易日)
+    df_1y = df.tail(252).copy()
+
+    # --- 1. 计算夏普比率 (Sharpe Ratio) ---
+    # 计算每日收益率
+    daily_returns = df_1y['Close'].pct_change()
+
+    # 防御：将无限大(inf)强行转换为 NaN，然后再统一清除，防止底层数学运算崩溃
+    daily_returns = daily_returns.replace([np.inf, -np.inf], np.nan).dropna()
+
+    if daily_returns.empty or daily_returns.std() == 0:
+        sharpe_ratio = None
+    else:
+        # 年化收益率 = 日均收益率 * 252
+        annual_return = daily_returns.mean() * 252
+        # 年化波动率 = 日收益率标准差 * sqrt(252)
+        annual_volatility = daily_returns.std() * np.sqrt(252)
+        # 夏普比率 = (年化收益 - 无风险收益) / 年化波动率
+        sharpe = (annual_return - risk_free_rate) / annual_volatility
+        sharpe_ratio = float(sharpe)
+
+    # --- 2. 计算最大回撤 (Maximum Drawdown) ---
+    # 累计最高价
+    rolling_max = df_1y['Close'].cummax()
+    # 当前价与累计最高价的回撤比例
+    drawdowns = (df_1y['Close'] - rolling_max) / rolling_max
+    max_drawdown = float(drawdowns.min())
+
+    # -- 3. 计算 52 周最高/最低及水位线 ---
+    high_52w = float(df_1y['High'].max())
+    low_52w = float(df_1y['Low'].min())
+    current_price = float(df_1y['Close'].iloc[-1])
+
+    # 水位线：计算当前价格在 52 周区间内的百分位 (0~1 之间)
+    if high_52w > low_52w:
+        price_position = (current_price - low_52w) / (high_52w - low_52w)
+    else:
+        price_position = None
+
+    return {
+        "sharpe_ratio_1y": sharpe_ratio,
+        "max_drawdown_1y_ratio": max_drawdown,
+        "high_52w": high_52w,
+        "low_52w": low_52w,
+        "price_position_52w_ratio": float(price_position) if price_position is not None else None
+    }
+
 def _add_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """
     内部辅助函数：为输入的 DataFrame 批量添加技术指标 (MA, MACD, RSI, KDJ, BOLL, VWAP)。
@@ -87,11 +148,16 @@ def _extract_latest_features(df: pd.DataFrame) -> dict:
     col_bbm = _get_dynamic_col(df, 'BBM_')
     col_bbl = _get_dynamic_col(df, 'BBL_')
 
+    # 调用风控计算模块
+    risk_metrics = _calc_1y_risk_metrics(df)
+
     return {
         "date": date_str,
         "volume": _safe_get(latest, 'Volume', is_int=True),
         "turnover_value": _safe_get(latest, 'Turnover_Value', is_int=True),
         "vwap": _safe_get(latest, 'VWAP_Custom'),
+        # 将夏普和最大回撤单独放入 risk_metrics 模块
+        "risk_metrics": risk_metrics,
         "trend": {
             "ma5": _safe_get(latest, 'SMA_5'),
             "ma10": _safe_get(latest, 'SMA_10'),
