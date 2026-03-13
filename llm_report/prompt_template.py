@@ -80,6 +80,16 @@ def generate_consolidated_api_prompt() -> str:
     # ==========================================
     # 3. 终极 API Prompt 结构 (System + Context + Data + Task)
     # ==========================================
+    # 高阶量化指标说明书 (Metric Dictionary)
+    metric_definitions = {
+        "price_to_earnings_to_roe_pr": "修正版市赚率 (PR = 修正系数n * PE / (ROE*100))。本系统加入了分红惩罚机制。评判标准：PR=1 为合理估值，PR < 0.4 为极度低估的巴菲特买入区间，PR > 2 意味着估值透支或盈利能力过低。",
+        "price_to_dream_ps_adjusted": "量化市梦率 (Price-to-Dream = PS / 营收增速比率)。类似 PEG，但使用市销率和营收增速，专门用于评估尚未盈利或高增长科技股（如理想汽车、泡泡玛特）。数值越低，说明'梦想'越有业绩支撑。",
+        "dcf_intrinsic_value_proxy": "格雷厄姆防守底线 (sqrt(22.5 * EPS * BVPS))。这是一种极度苛刻的防守型估值法，代表在毫无增长预期下的清算级价值底线。如果股价跌破此值，意味着处于极度错杀状态。",
+        "net_income_cash_content_ratio": "净利润现金含量 (经营现金流 / 净利润)。排雷核心指标。评判标准：大于 1 极其优秀（印钞机），0.8 - 1 为正常，持续低于 0.8 则存在严重的财务造假或利润调节风险（纸面富贵）。",
+        "price_position_52w_ratio": "52周水位线百分位。范围 0-1。0 代表当前价格处于过去一年最低点，1 代表处于一年最高点。0.5代表在中间位置。用于辅助判断目前是破位寻底还是突破创新高。",
+        "beta": "贝塔系数。衡量个股相对大盘的波动性。Beta > 1 代表比大盘波动更剧烈（高弹性），Beta < 1 代表比大盘抗跌（防御性）。"
+    }
+
     master_prompt = {
         "instructions": {
             "task": "港股股票持仓深度分析和配置建议",
@@ -94,14 +104,15 @@ def generate_consolidated_api_prompt() -> str:
             "time_horizon": "长期 (3-5年)",
             "investment_goal": "年化 15%-20%"
         },
+        "metric_definitions": metric_definitions,
         "global_portfolio_context": global_context,
         "stocks_analysis_queue": stock_analysis_queue,
         "analysis_requirements": [
             "请严格遵循以下框架使用“马斯克的第一性原理 Elon Musk's First Principles”进行输出，每一个分析内容都需要分成专业角度和狗都能看懂的角度进行输出：",
-            "1. 资产核心状态速览: 评估全局账户安全度，及各个标的的仓位健康度。",
-            "2. 每只股票的基本面与估值穿透: 重点评估市赚率(price_to_earnings_to_roe_pr)及净利润现金含量(防造假)。",
-            "3. 每只股票的技术面与多周期共振: 结合日/周/月线判断支撑阻力与当前动能。",
-            "4. 每只股票的情绪面搜索: 网络搜索近一个月该公司的信息，并提供思考分析时使用的参考链接，重点对雪球，同花顺，东方财富的相关内容进行搜索。",
+            "1. 资产核心状态速览: 评估全局账户安全度，及各个标的的仓位健康度，并制作表格。",
+            "2. 每只股票的基本面与估值穿透: 重点评估市赚率(price_to_earnings_to_roe_pr)及净利润现金(net_income_cash_content)含量(防造假)，对其余每个独立指标进行专业和狗都能看懂的角度进行解析，并制作表格。",
+            "3. 每只股票的技术面与多周期共振: 结合日/周/月线判断支撑阻力与当前动能，对每个独立指标进行专业和狗都能看懂的角度进行解析，并制作表格。",
+            "4. 每只股票的情绪面搜索: 网络搜索近一个月该公司的信息，提供思考分析时使用的参考链接，并制作表格，重点对雪球，同花顺，东方财富的相关内容进行搜索。",
             "5. 指出组合中最大的潜在风险点：如果股市强烈回调20%会发生什么。包括但不限于关税战，贸易战，热战，瘟疫等",
             "6. 牛熊指引：如果一切顺利，股价能到多少？逻辑是什么？如果风险爆发，股价底线在哪里？",
             "7. 最终决断与操作计划: 基于用户的特定备忘录和全局资金，给出明确的[加仓/减仓/持有/止损]建议（需精确到参考价位和数量比例）。"
@@ -123,6 +134,7 @@ def generate_consolidated_api_prompt() -> str:
     global_slice = {
         "instructions": master_prompt["instructions"],
         "user_profile": master_prompt["user_profile"],
+        "metric_definitions": master_prompt["metric_definitions"],
         "global_portfolio_context": master_prompt["global_portfolio_context"],
         "analysis_requirements": master_prompt["analysis_requirements"]
     }
