@@ -305,6 +305,11 @@ def generate_fundamental_analysis(ticker_symbol: str) -> dict:
         five_yr_avg_div = info_data.get('fiveYearAvgDividendYield')
         five_yr_avg_div_ratio = (five_yr_avg_div / 100) if five_yr_avg_div else None
 
+        # 提取 Beta 和华尔街分析师预期
+        beta = info_data.get('beta')
+        wall_street_target = info_data.get('targetMeanPrice')
+        recommendation = info_data.get('recommendationKey') # 例如 "buy", "hold", "underperform"
+
         latest_report["valuation"] = {
             "pe_ttm": pe_ttm,
             "pe_fwd": info_data.get('forwardPE'),
@@ -322,6 +327,13 @@ def generate_fundamental_analysis(ticker_symbol: str) -> dict:
             "dividend_rate_per_share": div_rate,                  # 每股绝对分红金额
             "five_year_avg_yield_ratio": five_yr_avg_div_ratio,   # 五年平均股息率 (用来判断当前股息是否具有吸引力)
             "payout_ratio": payout_ratio                          # 派息比率 (用来判断分红是否吃老本)
+        }
+
+        # 将市场预期与波动率作为独立模块挂载
+        latest_report["market_context"] = {
+            "beta": beta,
+            "wall_street_target_price": wall_street_target,
+            "analyst_recommendation": recommendation
         }
 
     print(f"✅ {ticker_symbol} 基本面数据清洗完成！包含 {len(fundamentals['annual_reports'])} 份年报, {len(fundamentals['quarterly_reports'])} 份季报。")
