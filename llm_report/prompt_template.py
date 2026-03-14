@@ -100,6 +100,7 @@ def generate_consolidated_api_prompt() -> str:
         },
         "user_profile": {
             "investment_style": "稳健增长型",
+            "investment_frequency": "1周1次统一交易，不做日内交易，非必要不交易",
             "risk_tolerance": "高 (可承受账户总净值 30% 的回撤)",
             "time_horizon": "长期 (3-5年)",
             "investment_goal": "年化 15%-20%"
