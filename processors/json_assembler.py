@@ -47,8 +47,8 @@ def assemble_llm_payload(ticker_symbol: str) -> dict:
 
     ibkr_symbol = ticker_symbol.split('.')[0].lstrip('0') if '.' in ticker_symbol else ticker_symbol
 
-    # 1. 交易流水 (仅保留这只股票的流水)
-    trans_file = TRANSACTIONS_DIR / f"transactions_{CURRENT_YEAR}.csv"
+    # 1. 交易流水 (从全量总账中精准切分出该股票的所有历史流水)
+    trans_file = TRANSACTIONS_DIR / "transactions_master.csv"
     if trans_file.exists():
         df_trans = pd.read_csv(trans_file)
         df_trans['Symbol'] = df_trans['Symbol'].astype(str)
