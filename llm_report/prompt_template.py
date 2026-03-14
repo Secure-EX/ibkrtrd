@@ -125,7 +125,7 @@ def generate_consolidated_api_prompt() -> str:
         json.dump(master_prompt, f, indent=4, ensure_ascii=False)
 
     # ==========================================
-    # 4. 网页端投喂切片器 (Web Prompt Splitter) - Optional
+    # 4. 网页端投喂切片器 (Web Prompt Splitter)
     # ==========================================
     web_dir = LATEST_DIR / f"web_prompts_{today_str}"
     web_dir.mkdir(exist_ok=True) # 创建专属切片文件夹
@@ -140,9 +140,10 @@ def generate_consolidated_api_prompt() -> str:
     }
     with open(web_dir / "01_全局设定与指令.txt", 'w', encoding='utf-8') as f:
         f.write("[System Instructions & Global Context]\n")
-        f.write("请阅读以下全局设定、账户资金状态以及最终的分析任务要求：\n\n```json\n")
-        f.write(json.dumps(global_slice, indent=4, ensure_ascii=False))
-        f.write("\n```\n\n[重要指令]\n")
+        f.write("请阅读以下全局设定、账户资金状态以及最终的分析任务要求：\n```json\n")
+        # f.write(json.dumps(global_slice, indent=4, ensure_ascii=False))
+        f.write(json.dumps(global_slice, ensure_ascii=False, separators=(',', ':')))
+        f.write("\n```\n[重要指令]\n")
         f.write("这是我的全局账户状态和你的分析任务。请回复：“收到，我已经清楚账户资金和风控底线。请提供个股数据，我将逐一进行极度深度的硬核拆解。”\n")
         f.write("注意：在收到后续的个股数据前，请不要做任何分析！")
 
@@ -153,16 +154,17 @@ def generate_consolidated_api_prompt() -> str:
         safe_ticker = ticker.replace(":", "_")
         with open(web_dir / f"02_{i+1:02d}_个股数据_{safe_ticker}.txt", 'w', encoding='utf-8') as f:
             f.write(f"[Stock Data {i+1}/{total_stocks}]\n")
-            f.write(f"这是第 {i+1} 只股票的数据（{ticker}）。\n\n```json\n")
-            f.write(json.dumps(stock, indent=4, ensure_ascii=False))
-            f.write("\n```\n\n[重要指令]\n")
+            f.write(f"这是第 {i+1} 只股票的数据（{ticker}）。\n```json\n")
+            # f.write(json.dumps(stock, indent=4, ensure_ascii=False))
+            f.write(json.dumps(stock, ensure_ascii=False, separators=(',', ':')))
+            f.write("\n```\n[重要指令]\n")
             f.write("请严格按照刚才确认的框架要求，动用全部算力，不惜字数地对这只股票进行深度剖析（包括市赚率、现金流排雷、多周期技术面共振和牛熊推演等）。\n")
             f.write("写完后，请提示我发送下一只股票的数据。")
 
     # --- 最终口：终极决断 ---
     with open(web_dir / "03_终极决断与操作计划.txt", 'w', encoding='utf-8') as f:
         f.write("[Final Actionable Plan]\n")
-        f.write("所有标的已投喂完毕！\n\n[重要指令]\n")
+        f.write("所有标的已投喂完毕！\n[重要指令]\n")
         f.write("现在，请你调取最初的“全局资金状态(Global Portfolio Context)”，结合你刚才进行的所有单股深度分析，给我出具一份包含明确股数、价位以及买卖逻辑的[最终操作计划表]。\n")
         f.write("请确保总动用资金绝不超过我的可用现金，并且严格遵守马斯克的第一性原理。")
 
