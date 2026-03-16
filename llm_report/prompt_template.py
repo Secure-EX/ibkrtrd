@@ -5,6 +5,7 @@ import os
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
+from processors.json_assembler import sanitize_for_web
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
@@ -53,7 +54,6 @@ def generate_consolidated_api_prompt() -> str:
     if positions_file:
         df_pos = pd.read_csv(positions_file)
         # 用我们刚写的过滤器清洗一下浮点数，直接转字典
-        from processors.json_assembler import sanitize_for_web
         global_context["current_all_positions"] = sanitize_for_web(df_pos.to_dict(orient='records'))
 
     # ==========================================
