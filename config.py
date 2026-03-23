@@ -13,8 +13,13 @@ DATA_DIR = BASE_DIR / "data"
 # === 2. 动态日期分区 (Partition Key) ===
 # 获取今日日期，例如: 20260218
 # 未来这对应数据库 partition key: values from ('2026-02-18')
-TODAY_STR = datetime.now().strftime("%Y%m%d")
-CURRENT_YEAR = datetime.now().strftime("%Y") # 用于交易流水按年滚动
+def get_today_str() -> str:
+    """每次调用都返回实时日期，例如: '20260218'"""
+    return datetime.now().strftime("%Y%m%d")
+
+def get_current_year() -> str:
+    """每次调用都返回实时年份，例如: '2026'"""
+    return datetime.now().strftime("%Y")
 
 # === 3. 定义子目录结构 ===
 

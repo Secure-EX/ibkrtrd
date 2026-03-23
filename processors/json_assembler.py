@@ -9,7 +9,7 @@ from datetime import datetime
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
-from config import PORTFOLIO_DIR, TRANSACTIONS_DIR, LATEST_DIR, CURRENT_YEAR
+from config import TRANSACTIONS_DIR, LATEST_DIR
 # 动态导入基本面引擎
 from processors.fundamental_calc import generate_fundamental_analysis
 # 动态导入技术面引擎

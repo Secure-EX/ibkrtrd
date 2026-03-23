@@ -8,7 +8,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
-from config import PORTFOLIO_DIR, IBKR_HOST, IBKR_PORT, CLIENT_ID, ACCOUNT_ID, TODAY_STR
+from config import PORTFOLIO_DIR, IBKR_HOST, IBKR_PORT, CLIENT_ID, ACCOUNT_ID, get_today_str
 
 # ==========================================
 # Function 1: 从 IBKR 拉取核心持仓与价格数据 (多币种隔离与汇率版)
@@ -109,7 +109,7 @@ def fetch_ibkr_base_data(ib, account_id):
 
     # 落盘 1: 账户资金摘要 (分币种绝对隔离)
     df_summary = pd.DataFrame(summary_rows)
-    summary_file = PORTFOLIO_DIR / f"account_summary_{TODAY_STR}.csv"
+    summary_file = PORTFOLIO_DIR / f"account_summary_{get_today_str()}.csv"
     df_summary.to_csv(summary_file, index=False, encoding='utf-8')
     print(f"   📊 账户分币种摘要已保存: {summary_file.name}")
 
@@ -185,7 +185,7 @@ def fetch_ibkr_base_data(ib, account_id):
 
         # 算出精准的昨日收盘价
         prev_close = last_price - change
-        change_pct = (change / prev_close) if prev_close > 0 else 0.0
+        change_pct = (change / prev_close) if prev_close != 0 else 0.0
 
         # 使用同币种的净值做分母
         local_net_liq = net_liq_by_curr.get(local_curr, 1.0)
@@ -209,7 +209,7 @@ def fetch_ibkr_base_data(ib, account_id):
             "Market Value": market_val,
             "Cost Basis": position * avg_price,
             "Unrealized P&L": item.unrealizedPNL,
-            "Unrealized P&L Ratio": (item.unrealizedPNL / (position * avg_price)) if (position * avg_price) > 0 else 0.0,
+            "Unrealized P&L Ratio": (item.unrealizedPNL / abs(position * avg_price)) if (position * avg_price) != 0 else 0.0,
             "Position": position,
             # 挂载交易规则防拒单字段
             "Board Lot": min_sizes.get(con_id, 1.0),
@@ -218,7 +218,7 @@ def fetch_ibkr_base_data(ib, account_id):
 
     # 6. 落盘当天的持仓快照
     df_positions = pd.DataFrame(ibkr_data)
-    positions_file = PORTFOLIO_DIR / f"current_positions_{TODAY_STR}.csv"
+    positions_file = PORTFOLIO_DIR / f"current_positions_{get_today_str()}.csv"
     df_positions.to_csv(positions_file, index=False, encoding='utf-8')
     print(f"   ✅ 持仓明细已保存至: {positions_file.name}")
 
@@ -232,26 +232,37 @@ def fetch_ibkr_base_data(ib, account_id):
 # 主运行入口
 # ==========================================
 def pull_all_ibkr_data():
+    """
+    连接 IBKR 并拉取全量持仓数据。
+
+    返回:
+        tuple: (ibkr_data, symbols_for_yf)
+            - 有持仓时返回填充好的列表
+            - 无持仓时返回 ([], [])
+
+    异常:
+        ConnectionError: TWS/Gateway 未启动或端口错误
+        Exception: IBKR API 或数据处理过程中的其他错误
+        (异常向上抛出，由 main.py 捕获处理)
+    """
     ib = IB()
-    result = ([], []) # 提前设定一个默认的空值兜底，防止异常时返回 None
     try:
         ib.connect(IBKR_HOST, IBKR_PORT, clientId=CLIENT_ID, readonly=True)
         print("✅ 成功连接至 IBKR TWS/Gateway!")
 
-        # 🌟 致命修复：接收底层函数的返回值，并赋给 result
         result = fetch_ibkr_base_data(ib, ACCOUNT_ID)
+        return result
 
     except ConnectionRefusedError:
-        print(f"❌ 连接 IBKR 失败：请检查 TWS/Gateway 是否已打开，且 API 端口（{IBKR_PORT}）设置正确。")
-    except Exception as e:
-        print(f"❌ 发生未知错误: {str(e)}")
+        # 包装为更有辨识度的异常类型，附带排障信息
+        raise ConnectionError(
+            f"连接 IBKR 失败：请检查 TWS/Gateway 是否已打开，且 API 端口（{IBKR_PORT}）设置正确。"
+        )
     finally:
+        # 无论成功还是失败，确保连接被安全释放
         if ib.isConnected():
             ib.disconnect()
-            print("\n🔌 IBKR 连接已安全断开。")
-
-    # 把结果作为接力棒，正式交还给上层调用者 (main.py)
-    return result
+            print("🔌 IBKR 连接已安全断开。")
 
 if __name__ == "__main__":
     pull_all_ibkr_data()

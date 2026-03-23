@@ -295,13 +295,13 @@ def generate_fundamental_analysis(ticker_symbol: str) -> dict:
         price_to_dream = _calc_price_to_dream(ps_ratio, rev_growth if rev_growth else None)
 
         # 提取股息与分红数据 (如果前瞻股息没有，就用过去 12 个月的滚动股息)
-        # 雅虎的当前股息率通常是整数百分比形态 (如 0.0087 代表 0.87%%)，为了满足我们的 ratio 规则，除以 100
+        # yfinance 的 dividendYield 返回百分比数字 (如 1.04 代表 1.04%)，除以 100 转为小数比率
         div_yield = info_data.get('dividendYield', info_data.get('trailingAnnualDividendYield'))
         div_yield_ratio = (div_yield / 100) if div_yield else None
         # 每股绝对分红金额
         div_rate = info_data.get('dividendRate', info_data.get('trailingAnnualDividendRate'))
 
-        # 雅虎的五年平均股息通常是整数百分比形态 (如 0.0087 代表 0.87%%)，为了满足我们的 ratio 规则，除以 100
+        # yfinance 的 fiveYearAvgDividendYield 返回百分比数字 (如 0.63 代表 0.63%)，除以 100 转为小数比率
         five_yr_avg_div = info_data.get('fiveYearAvgDividendYield')
         five_yr_avg_div_ratio = (five_yr_avg_div / 100) if five_yr_avg_div else None
 
