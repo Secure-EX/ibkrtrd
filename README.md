@@ -5,16 +5,16 @@
 
 ## 📖 项目简介 (Introduction)
 
-这是一个基于 Python 的轻量级个人量化投研系统，专为**周频交易者**设计。它通过 `ib_insync` 连接 Interactive Brokers (IBKR) 获取即时账户与持仓数据，结合 `pandas_ta` 进行本地技术面分析，并引入 Gemini / Qwen 3.5 / Deepseek 辅助解读（计划中）。
+这是一个基于 Python 的轻量级个人量化投研系统，专为**周频交易者**设计。它通过 `ib_insync` 连接 Interactive Brokers (IBKR) 获取即时账户与持仓数据，从 `yfinance` 和 `akshare` 拉取基本面及日交易情况，使用 `pandas_ta` 进行本地技术面分析，并引入 Gemini 辅助解读。
 
 **核心目标**：自动化数据获取流程，提供客观的技术指标分析，并执行严格的交易纪律风控（止损/仓位管理）。
 
 ## ✨ 主要功能 (Features)
 
-- **🔌 IBKR 无缝连接**：自动连接 TWS/Gateway，获取美股、港股实时行情。
+- **🔌 IBKR 无缝连接**：自动连接 TWS/Gateway，获取港股实时行情。
 - **🔬 基本面分析**：获取基本面估值 (PE/PB) 等。
 - **📊 多维技术分析**：
-  - 自动计算 MA (10/20/30/60/120/250)、MACD、RSI、KDJ、BOLL (周线/月线) 等。
+  - 自动计算 MA (10/20/30/60/120/250)、MACD、RSI、KDJ、BOLL (日线/周线/月线) 等。
   - **走势判定**：自动识别多头/空头排列。
   - **估值分位**：基于过去3年价格计算 Price Percentile。
 - **💼 持仓透视**：一键导出当前持仓、平均成本、未实现盈亏，分析持仓健康度。
@@ -25,7 +25,7 @@
 
 - **核心语言**: Python 3.12
 - **交易接口**: `ib_insync` (这也是 TWS API 的最佳封装)
-- **数据分析**: `pandas`, `pandas-ta`, `yfinance` (用于补充 PE/PB 数据)
+- **数据分析**: `pandas`, `pandas-ta`, `yfinance`, `akshare` (用于补充 PE/PB 数据)
 - **未来计划**: `Streamlit` (可视化仪表盘), `Local LLM` (Qwen/DeepSeek 用于财报分析)
 
 ## 🚀 快速开始 (Quick Start)
@@ -33,43 +33,46 @@
 ### 0. 📂 项目结构 (Structure)
 ```
 IBKR Portfolio Analysis Assistant/
-├── README.md                      # 项目说明文档
-├── .env                           # 存放敏感信息 (IBKR Account, Ports, Client ID, Gemini/Grok API Keys等)
-├── .gitignore                     # 忽略数据文件夹和 .env 推送
-├── main.py                        # 主程序入口 (流水线调度器)
-├── config.py                      # 全局业务参数 (回溯年限设定、重试次数等)
-├── requirements.txt               # 模组列表
+├── README.md                          # 项目说明文档
+├── .env                               # 存放敏感信息 (IBKR Account, Ports, Client ID, Gemini/Grok API Keys等)
+├── .gitignore                         # 忽略数据文件夹和 .env 推送
+├── config.py                          # 全局业务参数 (回溯年限设定、重试次数等)
+├── main.py                            # 主程序入口 (流水线调度器)
+├── requirements.txt                   # 模组列表
+├── user_notes.json                    # 用户个人对每个股票的思考，近期交易信息，或者网上手动摘取的文本信息
 │
-├── data_pull/                     # Extract 数据提取层
+├── data_pull/                         # Extract 数据提取层
 │   ├── __init__.py
-│   ├── ibkr_api.py                # 专职拉取持仓快照与交易流水
-│   ├── yfinance_api.py            # 专职拉取财报、基本面画像
-│   └── akshare_api.py             # 专职拉取 15年日线量价、沽空等
+│   ├── ibkr_api.py                    # 专职拉取持仓快照与交易流水
+│   ├── yfinance_api.py                # 专职拉取财报、基本面画像，如果akshare崩溃作为备用拉取引擎
+│   └── akshare_api.py                 # 专职拉取 15年日线量价等
 │
-├── processors/                    # Transform 数据转换层
+├── processors/                        # Transform 数据转换层
 │   ├── __init__.py
-│   ├── fundamental_calc.py        # 清洗财报，计算 Z-Score, DCF, 各种 Margin
-│   ├── technical_calc.py          # 重采样周/月线，计算 MA, MACD, BOLL 等
-│   ├── risk_calc.py               # 账户级风控 (计算系统的胜率、赔率、最大回撤)
-│   └── json_assembler.py          # 负责把算好的各个模块组装成终极大 JSON
+│   ├── fundamental_calc.py            # 清洗财报，计算 Z-Score, DCF, 各种 Margin
+│   ├── json_assembler.py              # 负责把算好的各个模块组装成终极大 JSON
+│   ├── risk_calc.py                   # 账户级风控 (计算系统的胜率、赔率、最大回撤)
+│   ├── technical_calc.py              # 重采样周/月线，计算 MA, MACD, BOLL 等
+│   └── transaction_parser.py          # 组装交易数据
 │
-├── llm_report/                    # Load 数据加载与输出层
+├── llm_report/                        # Load 数据加载与输出层
 │   ├── __init__.py
-│   ├── prompt_templates.py        # 存放调教 Gemini / Grok 的系统提示词模板
-│   └── report_generator.py        # 发送 JSON 给 LLM 并保存返回的 markdown 报告
+│   ├── prompt_templates.py            # 存放调教 Gemini / Grok 的系统提示词模板
+│   └── report_generator.py            # 发送 JSON 给 LLM 并保存返回的 markdown 报告
 │
-└── data/                          # 本地数据中心 (未来无缝迁移 Postgres)
-    ├── input/                     # 纯粹的原始数据 - CSV
-    │   ├── portfolio/             # 按 yyyymmdd 存放 IBKR 持仓
-    │   ├── transactions/          # 按 yyyymmdd 存放 IBKR 交易流水
-    │   ├── ohlcv/                 # Open-High-Low-Close-Volume 个股与大盘的原始日 K 线
-    │   ├── financials/            # 原始财报三表 (年报 半年报 季报) 数据
-    │   └── sentiment/             # 原始每日沽空与情绪数据
+└── data/                              # 本地数据中心 (未来无缝迁移 Postgres)
+    ├── input/                         # 纯粹的原始数据 - CSV
+    │   ├── financials/                # 原始财报三表 (年报 半年报 季报) 数据，现金流、收入数据
+    │   ├── ohlcv/                     # Open-High-Low-Close-Volume 个股与大盘 (未开发) 的原始日 K 线
+    │   ├── portfolio/                 # 按 yyyymmdd 存放 IBKR 持仓
+    │   ├── sentiment/                 # 原始每日沽空与情绪数据 (未开发)
+    │   └── transactions/              # IBKR 交易流水，合成所有独立交易为单一文件进行读取
     │
-    └── output/                    # 加工完毕的成品 - JSON
-        ├── _archive/              # [重点] 滚动冷备份，按 yyyymmdd 命名，防止数据崩溃
-        ├── latest/                # [重点] 永远只存全景更新的唯一真理 (如 0700_HK.json)，供大模型直读
-        └── final_reports/         # Gemini 最终输出的中文投资分析报告
+    └── output/                        # 加工完毕的成品 - JSON
+        ├── _archive/                  # 手动从latest文件夹备份
+        ├── final_reports/             # Gemini 最终输出的中文投资分析报告
+        └── latest/                    # [重点] 永远只存全景更新的唯一真理 (如 0700.HK_LLM_Payload.json)，供大模型直读
+            └── web_prompts_yyyymmdd/  # 网页切分json方便上传减少token使用
 ```
 
 ### 1. 🌏 环境要求 (Environment)
