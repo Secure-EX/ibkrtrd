@@ -70,7 +70,8 @@ FMP_API_KEY = os.getenv("FMP_API_KEY")
 # === 6. 全局业务参数配置 ===
 # 控制数据抓取的深度和逻辑
 LOOKBACK_YEARS = 15  # 默认回溯 15 年的数据，以覆盖完整宏观牛熊周期
-FINANCIAL_REPORT_YEARS = 5  # 喂给 LLM 的财报年限，避免 JSON 过于庞大浪费 token
+FINANCIAL_REPORT_YEARS = 4  # 喂给 LLM 的财报年度限制，避免 JSON 过于庞大浪费 token
+FINANCIAL_REPORT_QTERS = 8  # 喂给 LLM 的财报季度限制，避免 JSON 过于庞大浪费 token
 
 # === 7. 大盘指数配置 ===
 # yfinance 格式的指数代码，用于拉取大盘参照数据

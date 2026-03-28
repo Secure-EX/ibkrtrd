@@ -8,7 +8,7 @@ from datetime import datetime
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
-from config import FINANCIALS_DIR, FINANCIAL_REPORT_YEARS
+from config import FINANCIALS_DIR, FINANCIAL_REPORT_YEARS, FINANCIAL_REPORT_QTERS
 
 def _get_quarter_string(date_str):
     """将日期转换为财报季度字符串，例如 '2025-Q3'"""
@@ -407,11 +407,11 @@ def generate_fundamental_analysis(ticker_symbol: str) -> dict:
     q_cash_file = FINANCIALS_DIR / f"{ticker_symbol}_quarterly_cashflow.csv"
     fundamentals["quarterly_reports"] = _process_financial_statements(q_inc_file, q_bal_file, q_cash_file, market_cap, is_annual=False)
 
-    # 截取最近 N 年的报告喂给 LLM，原始 CSV 全量保留不动
+    # 截取最近 N 年的年度报告喂给 LLM，原始 CSV 全量保留不动
     # annual_reports 已经按日期倒序排列（最新在前），直接切片
     fundamentals["annual_reports"] = fundamentals["annual_reports"][:FINANCIAL_REPORT_YEARS]
-    # 3 years maximum 12 quarterly report
-    fundamentals["quarterly_reports"] = fundamentals["quarterly_reports"][:12]
+    # 截取最近 N 个季度的季度报告喂给 LLM，原始 CSV 全量保留不动
+    fundamentals["quarterly_reports"] = fundamentals["quarterly_reports"][:FINANCIAL_REPORT_QTERS]
 
     # 4. 在最新的年报中注入静态估值指标与股息指标 (包含你独创的三大核心指标)
     if fundamentals["annual_reports"]:
