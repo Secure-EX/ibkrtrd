@@ -62,9 +62,19 @@ IBKR_HOST = os.getenv("IBKR_HOST", "127.0.0.1") # 给个默认值兜底
 IBKR_PORT = int(os.getenv("IBKR_PORT", 7496))   # 默认模拟交易端口 7497，实盘是 7496
 CLIENT_ID = int(os.getenv("IBKR_CLIENT_ID", 1))
 
+CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-# GROK_API_KEY = os.getenv("GROK_API_KEY")
+GROK_API_KEY = os.getenv("GROK_API_KEY")
+FMP_API_KEY = os.getenv("FMP_API_KEY")
 
 # === 6. 全局业务参数配置 ===
 # 控制数据抓取的深度和逻辑
 LOOKBACK_YEARS = 15  # 默认回溯 15 年的数据，以覆盖完整宏观牛熊周期
+FINANCIAL_REPORT_YEARS = 5  # 喂给 LLM 的财报年限，避免 JSON 过于庞大浪费 token
+
+# === 7. 大盘指数配置 ===
+# yfinance 格式的指数代码，用于拉取大盘参照数据
+INDEX_SYMBOLS = ["^HSI", "3033.HK"]  # 恒生指数, 恒生科技指数ETF
+
+# === 8. 宏观数据配置 ===
+RISK_FREE_RATE = 0.04  # 夏普比率的无风险利率假设，可根据利率环境调整

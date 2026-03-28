@@ -1,14 +1,14 @@
 import sys
 from datetime import datetime
 import pandas as pd
-from ib_insync import IB
+from ib_insync import IB, Stock, util
 from pathlib import Path
 
 # 为了确保在终端里直接运行此文件也能找到根目录的 config.py，需要将项目根目录加入 sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
-from config import PORTFOLIO_DIR, IBKR_HOST, IBKR_PORT, CLIENT_ID, ACCOUNT_ID, get_today_str
+from config import PORTFOLIO_DIR, OHLCV_DIR, IBKR_HOST, IBKR_PORT, CLIENT_ID, ACCOUNT_ID, get_today_str, LOOKBACK_YEARS
 
 # ==========================================
 # Function 1: 从 IBKR 拉取核心持仓与价格数据 (多币种隔离与汇率版)
@@ -229,40 +229,139 @@ def fetch_ibkr_base_data(ib, account_id):
     return ibkr_data, symbols_for_yf
 
 # ==========================================
+# Function 2: 通过 IBKR 拉取历史日 K 线 (替代 AkShare 主引擎)
+# ==========================================
+def fetch_ibkr_ohlcv(ib, standard_symbol: str, currency: str, years: int = LOOKBACK_YEARS):
+    """
+    通过 IBKR TWS API 拉取历史日 K 线数据，支持首次全量拉取和后续增量填充。
+    IBKR 的 bar.average 是真实 VWAP，精度优于第三方数据源的估算值。
+
+    参数:
+        ib: 已连接的 IB 实例
+        standard_symbol: 标准代码 (如 "0700.HK" 或 "AAPL")
+        currency: 计价货币 (如 "HKD", "USD")
+        years: 回溯年限，默认 LOOKBACK_YEARS
+    """
+    file_path = OHLCV_DIR / f"{standard_symbol}_daily.csv"
+
+    # 构建合约对象
+    if currency == 'HKD':
+        raw_symbol = standard_symbol.split('.')[0].lstrip('0')
+        contract = Stock(raw_symbol, 'SEHK', 'HKD')
+    else:
+        contract = Stock(standard_symbol, 'SMART', currency)
+
+    ib.qualifyContracts(contract)
+
+    # --------------------------------------------------
+    # 增量检测：如果本地已有数据，只拉缺口部分
+    # --------------------------------------------------
+    df_existing = None
+
+    if file_path.exists():
+        df_existing = pd.read_csv(file_path)
+        last_date_str = df_existing['Date'].max()
+        last_dt = datetime.strptime(last_date_str, '%Y-%m-%d')
+        days_gap = (datetime.now() - last_dt).days
+
+        if days_gap <= 1:
+            print(f"   ℹ️ {standard_symbol} 本地数据已是最新，跳过拉取。")
+            return True
+
+        # 增量拉取：用天数 + 小缓冲区
+        if days_gap <= 360:
+            duration_str = f'{days_gap + 10} D'
+        else:
+            # 缺口超过一年，重新全量拉取更可靠
+            duration_str = f'{years} Y'
+            df_existing = None  # 放弃旧数据，全量覆盖
+
+        print(f"   📥 [增量模式] 拉取最近 {days_gap} 天的新数据...")
+    else:
+        duration_str = f'{years} Y'
+        print(f"   📥 [全量模式] 首次拉取过去 {years} 年的完整数据...")
+
+    # --------------------------------------------------
+    # 向 IBKR 发起历史数据请求
+    # --------------------------------------------------
+    bars = ib.reqHistoricalData(
+        contract,
+        endDateTime='',
+        durationStr=duration_str,
+        barSizeSetting='1 day',
+        whatToShow='TRADES',
+        useRTH=True,
+        formatDate=1
+    )
+
+    if not bars:
+        raise RuntimeError(f"IBKR 未能获取到 {standard_symbol} 的任何历史数据")
+
+    # --------------------------------------------------
+    # 转换为下游兼容的 DataFrame 格式
+    # --------------------------------------------------
+    df_new = util.df(bars)
+
+    # IBKR 的 average 字段 = 当日真实 VWAP，乘以成交量即得成交额
+    df_new['Turnover_Value'] = df_new['average'] * df_new['volume']
+    df_new['Date'] = pd.to_datetime(df_new['date']).dt.strftime('%Y-%m-%d')
+
+    df_new = df_new.rename(columns={
+        'open': 'Open', 'high': 'High', 'low': 'Low',
+        'close': 'Close', 'volume': 'Volume'
+    })
+
+    columns_to_keep = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Turnover_Value']
+    df_new = df_new[columns_to_keep].copy()
+
+    # --------------------------------------------------
+    # 如果是增量，合并新旧数据并去重
+    # --------------------------------------------------
+    if df_existing is not None:
+        df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+        df_combined.drop_duplicates(subset='Date', keep='last', inplace=True)
+    else:
+        df_combined = df_new
+
+    df_combined.sort_values('Date', ascending=True, inplace=True)
+    df_combined.to_csv(file_path, index=False, encoding='utf-8')
+
+    print(f"   ✅ [IBKR] {standard_symbol} 日K线已保存 (共 {len(df_combined)} 条交易日)")
+    return True
+
+# ==========================================
 # 主运行入口
 # ==========================================
 def pull_all_ibkr_data():
     """
     连接 IBKR 并拉取全量持仓数据。
+    v2.0: 返回 ib 连接对象，供后续历史数据拉取复用。
 
     返回:
-        tuple: (ibkr_data, symbols_for_yf)
-            - 有持仓时返回填充好的列表
-            - 无持仓时返回 ([], [])
+        tuple: (ib, ibkr_data, symbols_for_yf)
 
     异常:
         ConnectionError: TWS/Gateway 未启动或端口错误
-        Exception: IBKR API 或数据处理过程中的其他错误
-        (异常向上抛出，由 main.py 捕获处理)
+        其他异常向上抛出，由 main.py 捕获处理
     """
     ib = IB()
     try:
         ib.connect(IBKR_HOST, IBKR_PORT, clientId=CLIENT_ID, readonly=True)
         print("✅ 成功连接至 IBKR TWS/Gateway!")
 
-        result = fetch_ibkr_base_data(ib, ACCOUNT_ID)
-        return result
+        ibkr_data, symbols_for_yf = fetch_ibkr_base_data(ib, ACCOUNT_ID)
+        return ib, ibkr_data, symbols_for_yf
 
     except ConnectionRefusedError:
-        # 包装为更有辨识度的异常类型，附带排障信息
         raise ConnectionError(
             f"连接 IBKR 失败：请检查 TWS/Gateway 是否已打开，且 API 端口（{IBKR_PORT}）设置正确。"
         )
-    finally:
-        # 无论成功还是失败，确保连接被安全释放
+    except Exception:
         if ib.isConnected():
             ib.disconnect()
-            print("🔌 IBKR 连接已安全断开。")
+        raise
 
 if __name__ == "__main__":
-    pull_all_ibkr_data()
+    ib, data, syms = pull_all_ibkr_data()
+    if ib.isConnected():
+        ib.disconnect()

@@ -1,177 +1,140 @@
 import sys
-import random
 import pandas as pd
 import akshare as ak
-import yfinance as yf
-import time
-from datetime import datetime, timedelta
 from pathlib import Path
 
-# 为了确保在终端里直接运行此文件也能找到根目录的 config.py，需要将项目根目录加入 sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
-from config import OHLCV_DIR, LOOKBACK_YEARS
+from config import FINANCIALS_DIR
 
 # ==========================================
-# 核心拉取函数
+# 中文科目 → yfinance 英文列名 映射表
+# 只映射 fundamental_calc.py 实际使用的字段
 # ==========================================
+INCOME_MAP = {
+    "营业额": "Total Revenue",
+    "营运收入": "Operating Revenue",
+    "毛利": "Gross Profit",
+    "经营溢利": "Operating Income",
+    "除税前溢利": "Pretax Income",
+    "税项": "Income Tax Expense",
+    "除税后溢利": "Net Income",
+    "股东应占溢利": "Net Income Common Stockholders",
+    "每股基本盈利": "Basic EPS",
+    "每股摊薄盈利": "Diluted EPS",
+    "融资成本": "Interest Expense",         # 计算利息覆盖倍数
+    "利息收入": "Interest Income",          # 计算净利息支出
+}
 
-def fallback_to_yfinance(ticker_symbol: str, years: int) -> bool:
+BALANCE_MAP = {
+    "总资产": "Total Assets",
+    "流动资产合计": "Current Assets",
+    "流动负债合计": "Current Liabilities",
+    "总负债": "Total Liabilities Net Minority Interest",
+    "股东权益": "Stockholders Equity",
+    "总权益": "Total Equity Gross Minority Interest",
+    "保留溢利(累计亏损)": "Retained Earnings",
+    "净流动资产": "Working Capital",
+    "现金及等价物": "Cash And Cash Equivalents",
+    "应收帐款": "Accounts Receivable",       # 计算应收周转率
+}
+
+CASHFLOW_MAP = {
+    "经营业务现金净额": "Operating Cash Flow",
+    "投资业务现金净额": "Investing Cash Flow",
+    "融资业务现金净额": "Financing Cash Flow",
+    "现金净额": "Changes In Cash",
+    "购建固定资产": "Capital Expenditure",
+    "已付股息(融资)": "Dividends Paid",
+    "加:折旧及摊销": "Depreciation And Amortization",  # 计算 EBITDA
+}
+
+def _pivot_long_to_wide(df: pd.DataFrame, name_map: dict) -> pd.DataFrame:
     """
-    备用引擎：当 AkShare 失败时，使用雅虎财经拉取数据，并拟合补全缺失字段。
-
-    返回:
-    bool: 拉取并保存是否成功
+    将 akshare 的长格式 (每行一个科目) 转换为 yfinance 兼容的宽格式 (每行一个报告期)。
     """
-    print(f"   🔄 [备用引擎] 正在唤醒 yfinance 接管 {ticker_symbol} 的量价拉取任务...")
+    if df is None or df.empty:
+        return pd.DataFrame()
 
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=years * 365)
+    # 只保留我们需要的科目
+    df_filtered = df[df['STD_ITEM_NAME'].isin(name_map.keys())].copy()
 
-    try:
-        ticker = yf.Ticker(ticker_symbol)
-        # yfinance 对新股极其包容，比如理想汽车只有 5 年历史，要 15 年它也会平稳返回 5 年数据
-        df = ticker.history(start=start_date.strftime('%Y-%m-%d'), end=end_date.strftime('%Y-%m-%d'))
+    if df_filtered.empty:
+        return pd.DataFrame()
 
-        if df.empty:
-            print(f"   ❌ [备用引擎] yfinance 也未能获取到 {ticker_symbol} 的数据。")
-            return False
+    # 标准化日期
+    df_filtered['Date'] = pd.to_datetime(df_filtered['REPORT_DATE']).dt.strftime('%Y-%m-%d')
 
-        df.reset_index(inplace=True)
+    # 将中文科目名替换为英文列名
+    df_filtered['STD_ITEM_NAME'] = df_filtered['STD_ITEM_NAME'].map(name_map)
 
-        # 时区处理：把带时区的 datetime 转换为干净的字符串 YYYY-MM-DD
-        df['Date'] = pd.to_datetime(df['Date']).dt.tz_localize(None).dt.strftime('%Y-%m-%d')
+    # 长转宽：每行一个日期，每列一个科目
+    df_wide = df_filtered.pivot_table(
+        index='Date',
+        columns='STD_ITEM_NAME',
+        values='AMOUNT',
+        aggfunc='first'
+    ).reset_index()
 
-        # 核心替代逻辑：拟合 AkShare 特有的 Turnover_Value (成交额)
-        # 采用典型价格 (Typical Price) 估算成交额 Turnover_approx = ((High + Low + Close) / 3) x Volume
-        typical_price = (df['High'] + df['Low'] + df['Close']) / 3
-        df['Turnover_Value'] = typical_price * df['Volume']
+    df_wide.columns.name = None  # 去掉 pivot 产生的列名层级
+    df_wide.sort_values('Date', ascending=True, inplace=True)
 
-        # 选取下游 technical_calc.py 强依赖的列
-        columns_to_keep = [
-            'Date',
-            'Open',
-            'Close',
-            'High',
-            'Low',
-            'Volume',
-            'Turnover_Value'
-        ]
-        df_clean = df[columns_to_keep].copy()
+    return df_wide
 
-        df_clean.sort_values('Date', ascending=True, inplace=True)
-        file_path = OHLCV_DIR / f"{ticker_symbol}_daily.csv"
-        df_clean.to_csv(file_path, index=False, encoding='utf-8')
-
-        print(f"   ✅ [备用引擎] 成功! {ticker_symbol} 量价数据已由 yfinance 存入 (共 {len(df_clean)} 条)")
-        return True
-
-    except Exception as e:
-        print(f"   ❌ [备用引擎] 发生崩溃: {e}")
-        return False
-
-def fetch_hk_ohlcv(ticker_symbol: str, years: int = LOOKBACK_YEARS):
+def fetch_financials_akshare(ticker_symbol: str) -> bool:
     """
-    通过 AkShare 拉取港股历史日 K 线数据 (包含成交量与成交额)，并保存为 CSV。
-    失败则自动降级到备用引擎。
+    通过 akshare (东方财富) 拉取港股财报三表，输出格式与 yfinance 完全兼容。
+    数据源更新速度通常比 yfinance 快 2-3 周。
 
     参数:
-    ticker_symbol (str): 股票代码，例如 "0700.HK"
-    years (int): 回溯年限，默认 LOOKBACK_YEARS 年
-
-    返回:
-    bool: 拉取并保存是否成功
+        ticker_symbol: 标准代码 (如 "0700.HK")
     """
-    print(f"🔄 开始抓取 {ticker_symbol} 过去 {years} 年的量价数据...")
+    print(f"🔄 [AkShare] 开始抓取 {ticker_symbol} 的财务报表 (东方财富数据源)...")
 
-    # 1. 股票代码 5 位数预处理 (针对 AkShare 港股数据源)
-    # "0700.HK" -> 提取 "0700" -> 补齐 5 位变成 "00700"
-    base_symbol = ticker_symbol.split('.')[0] if '.' in ticker_symbol else ticker_symbol
-    ak_symbol = base_symbol.zfill(5)
+    # 0700.HK → 00700
+    ak_symbol = ticker_symbol.split('.')[0].zfill(5)
 
-    # 2. 计算日期范围 (格式: YYYYMMDD)
-    end_date_obj = datetime.now()
-    start_date_obj = end_date_obj - timedelta(days=years * 365)
+    # ==========================================
+    # 定义拉取任务: (symbol参数, 报表类型, indicator, 映射表, 输出文件后缀, 标签)
+    # ==========================================
+    tasks = [
+        ("利润表", "年度", INCOME_MAP, "annual_income", "年报利润表"),
+        ("利润表", "报告期", INCOME_MAP, "quarterly_income", "季报利润表"),
+        ("资产负债表", "年度", BALANCE_MAP, "annual_balance", "年报资产负债表"),
+        ("资产负债表", "报告期", BALANCE_MAP, "quarterly_balance", "季报资产负债表"),
+        ("现金流量表", "年度", CASHFLOW_MAP, "annual_cashflow", "年报现金流量表"),
+        ("现金流量表", "报告期", CASHFLOW_MAP, "quarterly_cashflow", "季报现金流量表"),
+    ]
 
-    start_date_str = start_date_obj.strftime("%Y%m%d")
-    end_date_str = end_date_obj.strftime("%Y%m%d")
+    success_count = 0
 
-    max_retries = 3
-    akshare_success = False
-
-    # 尝试主引擎
-    for attempt in range(1, max_retries + 1):
+    for report_type, indicator, name_map, suffix, label in tasks:
         try:
-            # 加上一个极其细微的随机延迟，防止并发请求被直接拉黑
-            if attempt > 1:
-                sleep_time = random.uniform(5, 10) # 随机休息 5 到 10 秒
-                print(f"   ⚠️ 第 {attempt} 次尝试重新连接... (休眠 {sleep_time:.1f} 秒避开反爬)")
-                time.sleep(sleep_time)
-
-            # 3. 调用 AkShare 接口
-            # period="daily" 代表日线
-            # adjust="qfq" 代表前复权 (极其重要！技术分析必须用前复权价格，否则分红除权会导致均线断层)
-            df = ak.stock_hk_hist(
-                symbol=ak_symbol,
-                period="daily",
-                start_date=start_date_str,
-                end_date=end_date_str,
-                adjust="qfq"
+            df_raw = ak.stock_financial_hk_report_em(
+                stock=ak_symbol, symbol=report_type, indicator=indicator
             )
 
-            if df is None or df.empty:
-                print(f"❌ 未能获取到 {ticker_symbol} 的数据，API 返回为空。")
-                return False
+            df_wide = _pivot_long_to_wide(df_raw, name_map)
 
-            # 4. 列名标准化清洗 (将中文列名映射为标准的英文列名，方便后续 Pandas 处理)
-            rename_map = {
-                '日期': 'Date',
-                '开盘': 'Open',
-                '收盘': 'Close',
-                '最高': 'High',
-                '最低': 'Low',
-                '成交量': 'Volume',
-                '成交额': 'Turnover_Value', # 成交额 (金额)
-                '振幅': 'Amplitude',
-                '涨跌幅': 'Pct_Chg',
-                '涨跌额': 'Change',
-                '换手率': 'Turnover_Rate'
-            }
-            df.rename(columns=rename_map, inplace=True)
+            if df_wide.empty:
+                print(f"  ⚠️ {label} 数据为空，跳过。")
+                continue
 
-            # 确保 Date 列是标准的 YYYY-MM-DD 格式
-            df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
-
-            # 5. 直接使用 config 里的 OHLCV_DIR 落盘
-            df.sort_values('Date', ascending=True, inplace=True)
-            file_path = OHLCV_DIR / f"{ticker_symbol}_daily.csv"
-
-            # index=False 保证不会把无意义的行号存入 CSV
-            df.to_csv(file_path, index=False, encoding='utf-8')
-            print(f"   ✅ [主引擎] 成功! {ticker_symbol} 量价数据已由 AkShare 存入 {file_path} (共 {len(df)} 条交易日)")
-            akshare_success = True
-            break # 成功则跳出重试
+            file_path = FINANCIALS_DIR / f"{ticker_symbol}_{suffix}.csv"
+            df_wide.to_csv(file_path, index=False, encoding='utf-8')
+            print(f"  ✅ 成功提取 {label}: {file_path.name} (共 {len(df_wide)} 期)")
+            success_count += 1
 
         except Exception as e:
-            err_msg = str(e)
-            if "Connection aborted" in err_msg or "RemoteDisconnected" in err_msg or "timeout" in err_msg.lower():
-                print(f"   🛑 网络被掐断: {err_msg.split('(')[0]}")
-                if attempt == max_retries:
-                    print(f"❌ {ticker_symbol} 连续 {max_retries} 次抓取失败，请检查网络或稍后再试。")
-                continue # 继续下一次 for 循环重试
-            else:
-                # 如果是 KeyError 等数据结构错误，说明不是网络问题，直接抛出
-                print(f"❌ 数据解析或其它致命错误: {err_msg}")
+            print(f"  ❌ 提取 {label} 时发生错误: {e}")
 
-    # 降级判定：如果主引擎彻底阵亡，启动 C 计划
-    if not akshare_success:
-        return fallback_to_yfinance(ticker_symbol, years)
+    print(f"🎉 [AkShare] {ticker_symbol} 财报拉取完毕！成功 {success_count}/6")
+    return success_count > 0
 
 # ==========================================
-# 测试模块 (仅在该文件被直接运行时触发)
+# 测试入口
 # ==========================================
 if __name__ == "__main__":
-    # 测试拉取腾讯控股 (0700.HK) 过去 15 年的数据
     test_ticker = "0700.HK"
-    fetch_hk_ohlcv(test_ticker)
+    fetch_financials_akshare(test_ticker)
