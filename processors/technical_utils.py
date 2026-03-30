@@ -95,3 +95,42 @@ def _rolling_percentile_rank(series: pd.Series, window: int) -> pd.Series:
         return (arr[:-1] < arr[-1]).sum() / (n - 1)
 
     return series.rolling(window, min_periods=max(20, window // 4)).apply(_pct_rank, raw=True)
+
+
+# ==========================================
+# 测试模块
+# ==========================================
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+    import pandas as pd
+
+    BASE_DIR = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(BASE_DIR))
+    from config import OHLCV_DIR
+
+    test_ticker = "0700.HK"
+    file_path = OHLCV_DIR / f"{test_ticker}_daily.csv"
+
+    print(f"财报发布滞后天数常量: FINANCIAL_PUBLICATION_LAG_DAYS = {FINANCIAL_PUBLICATION_LAG_DAYS}")
+
+    if not file_path.exists():
+        print(f"⚠️ 找不到 {test_ticker} 的量价数据: {file_path}")
+    else:
+        df = pd.read_csv(file_path)
+        df['Date'] = pd.to_datetime(df['Date'])
+        df.set_index('Date', inplace=True)
+        df.sort_index(ascending=True, inplace=True)
+
+        print(f"\n✅ 已加载 {test_ticker} 日线数据，共 {len(df)} 行")
+
+        # 测试 _rolling_percentile_rank
+        rank_series = _rolling_percentile_rank(df['Close'], window=250)
+        latest_rank = rank_series.dropna().iloc[-1] if not rank_series.dropna().empty else None
+        print(f"\n滚动百分位排名 (250日窗口) 最新值: {round(latest_rank, 4) if latest_rank is not None else None}")
+
+        # 测试 _percentile_rank_in_series
+        current_price = float(df['Close'].iloc[-1])
+        history_1y = df['Close'].tail(252)
+        pct_rank = _percentile_rank_in_series(current_price, history_1y)
+        print(f"当前价格 {current_price} 在过去1年的百分位: {round(pct_rank, 4) if pct_rank is not None else None}")

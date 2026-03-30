@@ -177,3 +177,48 @@ def _assess_resonance(long_risk: float, short_risk: float) -> dict:
             "direction": "neutral",
             "description": f"长线({long_risk:.2f})和短线({short_risk:.2f})均处于中性区间，无明显方向信号"
         }
+
+
+# ==========================================
+# 测试模块
+# ==========================================
+if __name__ == "__main__":
+    import json
+    import sys
+    from pathlib import Path
+    import pandas as pd
+
+    BASE_DIR = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(BASE_DIR))
+    from config import OHLCV_DIR
+
+    test_ticker = "0700.HK"
+    file_path = OHLCV_DIR / f"{test_ticker}_daily.csv"
+
+    if not file_path.exists():
+        print(f"⚠️ 找不到 {test_ticker} 的量价数据: {file_path}")
+    else:
+        df = pd.read_csv(file_path)
+        df['Date'] = pd.to_datetime(df['Date'])
+        df.set_index('Date', inplace=True)
+        df.sort_index(ascending=True, inplace=True)
+
+        print(f"⚙️ 正在计算 {test_ticker} 的风控指标...")
+
+        # 测试 _calc_1y_risk_metrics
+        risk_metrics = _calc_1y_risk_metrics(df)
+        print("\n1年风控指标:")
+        print(json.dumps(risk_metrics, indent=4, ensure_ascii=False))
+
+        # 测试 _risk_zone_label
+        pos_52w = risk_metrics.get("price_position_52w_ratio")
+        if pos_52w is not None:
+            label_long = _risk_zone_label(pos_52w, "long")
+            label_short = _risk_zone_label(pos_52w, "short")
+            print(f"\n52周水位 {pos_52w:.4f} 对应标签（长线）: {label_long}")
+            print(f"52周水位 {pos_52w:.4f} 对应标签（短线）: {label_short}")
+
+        # 测试 _assess_resonance
+        resonance = _assess_resonance(0.3, 0.6)
+        print(f"\n多周期共振测试 (长线0.3, 短线0.6):")
+        print(json.dumps(resonance, indent=4, ensure_ascii=False))

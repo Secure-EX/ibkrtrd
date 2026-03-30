@@ -124,3 +124,24 @@ def load_financial_series(ticker_symbol: str, financial_dir: Path = None) -> tup
         print(f"  ✅ BVPS: {len(bvps_series)} 期 ({bvps_series.index.min().date()} ~ {bvps_series.index.max().date()})")
 
     return eps_series, bvps_series
+
+
+# ==========================================
+# 测试模块
+# ==========================================
+if __name__ == "__main__":
+    test_ticker = "0700.HK"
+    print(f"⚙️ 正在加载 {test_ticker} 的财报数据...")
+    eps_series, bvps_series = load_financial_series(test_ticker)
+
+    if eps_series is not None:
+        print(f"\nEPS 序列（最新5期）:")
+        print(eps_series.tail(5).to_string())
+    else:
+        print("⚠️ 未找到 EPS 数据")
+
+    if bvps_series is not None:
+        print(f"\nBVPS 序列（最新5期）:")
+        print(bvps_series.tail(5).to_string())
+    else:
+        print("⚠️ 未找到 BVPS 数据")

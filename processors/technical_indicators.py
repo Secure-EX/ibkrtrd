@@ -194,3 +194,47 @@ def _calc_price_percentile_rank(df: pd.DataFrame, lookback_days: int) -> float:
     current_price = float(closes.iloc[-1])
     rank = float((closes < current_price).sum()) / len(closes)
     return rank
+
+
+# ==========================================
+# 测试模块
+# ==========================================
+if __name__ == "__main__":
+    import json
+    import sys
+    from pathlib import Path
+    import pandas as pd
+
+    BASE_DIR = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(BASE_DIR))
+    from config import OHLCV_DIR
+
+    test_ticker = "0700.HK"
+    file_path = OHLCV_DIR / f"{test_ticker}_daily.csv"
+
+    if not file_path.exists():
+        print(f"⚠️ 找不到 {test_ticker} 的量价数据: {file_path}")
+    else:
+        df = pd.read_csv(file_path)
+        df['Date'] = pd.to_datetime(df['Date'])
+        df.set_index('Date', inplace=True)
+        df.sort_index(ascending=True, inplace=True)
+
+        print(f"⚙️ 正在计算 {test_ticker} 的技术指标...")
+
+        # 计算技术指标
+        base_cols = set(df.columns)
+        df = _add_technical_indicators(df)
+        new_cols = [c for c in df.columns if c not in base_cols]
+        print(f"✅ 技术指标计算完成，新增 {len(new_cols)} 列: {new_cols}")
+
+        # 计算趋势信号
+        signals = _calc_trend_signals(df)
+        print("\n趋势研判信号:")
+        print(json.dumps(signals, indent=4, ensure_ascii=False))
+
+        # 计算价格百分位
+        pct_1y = _calc_price_percentile_rank(df, lookback_days=252)
+        pct_5y = _calc_price_percentile_rank(df, lookback_days=1260)
+        print(f"\n价格分位数（1年窗口）: {round(pct_1y, 4) if pct_1y is not None else None}")
+        print(f"价格分位数（5年窗口）: {round(pct_5y, 4) if pct_5y is not None else None}")

@@ -262,3 +262,38 @@ def _calc_market_correlation(df_stock: pd.DataFrame, index_data: dict = None, wi
         result[index_name] = entry
 
     return result
+
+
+# ==========================================
+# 测试模块
+# ==========================================
+if __name__ == "__main__":
+    import json
+    import pandas as pd
+
+    test_ticker = "0700.HK"
+    file_path = OHLCV_DIR / f"{test_ticker}_daily.csv"
+
+    if not file_path.exists():
+        print(f"⚠️ 找不到 {test_ticker} 的量价数据: {file_path}")
+    else:
+        df = pd.read_csv(file_path)
+        df['Date'] = pd.to_datetime(df['Date'])
+        df.set_index('Date', inplace=True)
+        df.sort_index(ascending=True, inplace=True)
+
+        print(f"⚙️ 正在计算 {test_ticker} 的大盘指数分析...")
+
+        # 加载大盘指数（只读一次磁盘）
+        index_data = _load_index_data()
+        print(f"✅ 已加载大盘指数: {', '.join(index_data.keys()) if index_data else '无'}")
+
+        # 计算自身周期
+        own_cycle = _calc_own_cycle(df, index_data=index_data)
+        print("\n自身周期分析:")
+        print(json.dumps(own_cycle, indent=4, ensure_ascii=False))
+
+        # 计算大盘相关性
+        mkt_corr = _calc_market_correlation(df, index_data=index_data)
+        print("\n大盘相关性分析:")
+        print(json.dumps(mkt_corr, indent=4, ensure_ascii=False))

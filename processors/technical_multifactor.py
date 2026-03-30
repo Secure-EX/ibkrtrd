@@ -477,3 +477,41 @@ def calc_multifactor_risk(
     }
 
 
+# ==========================================
+# 测试模块
+# ==========================================
+if __name__ == "__main__":
+    import json
+    import sys
+    from pathlib import Path
+    import pandas as pd
+
+    BASE_DIR = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(BASE_DIR))
+    from config import OHLCV_DIR
+    from technical_indicators import _add_technical_indicators
+    from technical_financial import load_financial_series
+
+    test_ticker = "0700.HK"
+    file_path = OHLCV_DIR / f"{test_ticker}_daily.csv"
+
+    if not file_path.exists():
+        print(f"⚠️ 找不到 {test_ticker} 的量价数据: {file_path}")
+    else:
+        df = pd.read_csv(file_path)
+        df['Date'] = pd.to_datetime(df['Date'])
+        df.set_index('Date', inplace=True)
+        df.sort_index(ascending=True, inplace=True)
+        df = _add_technical_indicators(df)
+
+        eps_series, bvps_series = load_financial_series(test_ticker)
+
+        print(f"⚙️ 正在计算 {test_ticker} 的多因子风险评估...")
+
+        long_risk = calc_multifactor_risk(df, term="long", eps_series=eps_series, bvps_series=bvps_series)
+        short_risk = calc_multifactor_risk(df, term="short", eps_series=eps_series, bvps_series=bvps_series)
+
+        print("\n长线风险评估:")
+        print(json.dumps(long_risk, indent=4, ensure_ascii=False))
+        print("\n短线风险评估:")
+        print(json.dumps(short_risk, indent=4, ensure_ascii=False))
