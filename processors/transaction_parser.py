@@ -1,4 +1,5 @@
 import csv
+from datetime import datetime
 import glob
 import pandas as pd
 from pathlib import Path
@@ -83,13 +84,13 @@ def clean_ibkr_transactions():
                         if unique_key not in trades_dict:
                             trades_dict[unique_key] = {
                                 "Symbol": symbol,
-                                "Time": time_str,
+                                "Time": datetime.strptime(time_str, "%Y-%m-%d, %H:%M:%S").strftime("%Y-%m-%d"),
                                 "Action": action,
                                 "Quantity": abs(qty),
                                 "Price": price,
-                                "Commission": comm,       # 统一使用 Commission
+                                # "Commission": comm,       # 统一使用 Commission
                                 "Realized_PnL": pnl,
-                                "Code": trade_code
+                                # "Code": trade_code
                             }
 
         except Exception as e:

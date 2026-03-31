@@ -43,11 +43,12 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-_MODEL         = "claude-opus-4-6"
-_TIMEOUT_TURN1 = 180   # seconds — acknowledgment is a short reply
-_TIMEOUT_STOCK = 600   # seconds — deep analysis per stock (~5 min)
-_TIMEOUT_FINAL = 600   # seconds — consolidated action plan
-_INTER_TURN_SLEEP = 2  # seconds between turns
+_MODEL_STOCK      = "claude-sonnet-4-6"   # turns 1-N: global context + per-stock
+_MODEL_FINAL      = "claude-opus-4-6"     # final turn only: decision & action plan
+_TIMEOUT_TURN1    = 180   # seconds — acknowledgment is a short reply
+_TIMEOUT_STOCK    = 600   # seconds — deep analysis per stock (~5 min)
+_TIMEOUT_FINAL    = 600   # seconds — consolidated action plan
+_INTER_TURN_SLEEP = 2     # seconds between turns
 
 
 # ---------------------------------------------------------------------------
@@ -68,9 +69,11 @@ def _check_claude_cli() -> str:
 
 def _send_message(
     prompt_text: str,
+    model: str = _MODEL_STOCK,
     session_id: str | None = None,
     timeout: int = 300,
     cli_path: str = "claude",
+    effort: str | None = None,
 ) -> tuple[str, str]:
     """
     Send one message to the Claude CLI in non-interactive print mode.
@@ -88,9 +91,11 @@ def _send_message(
     """
     cmd = [
         cli_path, "-p",
-        "--model", _MODEL,
+        "--model", model,
         "--output-format", "json",
     ]
+    if effort:
+        cmd += ["--effort", effort]
     if session_id:
         cmd += ["--resume", session_id]
 
@@ -130,11 +135,12 @@ def _assemble_report(
 ) -> str:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines = [
-        "# Claude Opus 4.6 深度分析报告\n",
+        "# Claude 深度分析报告\n",
         f"- **生成时间**: {now}",
         f"- **数据来源**: `{source_dir.name}`",
-        f"- **模型**: `{_MODEL}`",
-        f"- **Session ID**: `{session_id or 'unknown'}`",
+        f"- **个股分析模型**: `{_MODEL_STOCK}`",
+        f"- **决策模型**: `{_MODEL_FINAL}`",
+        f"- **Session ID (Sonnet)**: `{session_id or 'unknown'}`",
     ]
     if errors:
         lines += [
@@ -208,12 +214,13 @@ def generate_report(web_prompts_dir: Path | None = None) -> Path | None:
     print(f"{'='*54}\n")
 
     # -------------------------------------------------------------------
-    # Turn 1 — Global context; establishes the session
+    # Turn 1 — Global context; establishes the Sonnet session
     # -------------------------------------------------------------------
-    print(f"[1/{total_turns}] 发送全局设定，等待确认...")
+    print(f"[1/{total_turns}] 发送全局设定，等待确认 (Sonnet)...")
     try:
         text, session_id = _send_message(
             global_file.read_text(encoding="utf-8"),
+            model=_MODEL_STOCK,
             timeout=_TIMEOUT_TURN1,
             cli_path=cli_path,
         )
@@ -227,48 +234,71 @@ def generate_report(web_prompts_dir: Path | None = None) -> Path | None:
         raise   # Re-raise; no session → nothing to resume
 
     # -------------------------------------------------------------------
-    # Turns 2-N — Per-stock deep analysis
+    # Turns 2-N — Per-stock deep analysis (Sonnet)
     # -------------------------------------------------------------------
+    stock_analyses: list[tuple[str, str]] = []   # (ticker, analysis_text)
+
     for i, stock_file in enumerate(stock_files, start=2):
         # Filename pattern: 02_01_个股数据_0700.HK.txt
         # Extract ticker from the last underscore-delimited segment of the stem
         stem_parts = stock_file.stem.split("_")
-        # Rejoin the last segment that looks like a ticker (may contain dots)
         ticker = stem_parts[-1] if len(stem_parts) >= 4 else stock_file.stem
 
-        print(f"[{i}/{total_turns}] 分析 {ticker}...")
+        print(f"[{i}/{total_turns}] 分析 {ticker} (Sonnet)...")
         try:
             text, session_id = _send_message(
                 stock_file.read_text(encoding="utf-8"),
+                model=_MODEL_STOCK,
                 session_id=session_id,
                 timeout=_TIMEOUT_STOCK,
                 cli_path=cli_path,
             )
             responses.append({"label": f"个股深度分析: {ticker}", "text": text})
+            stock_analyses.append((ticker, text))
             print(f"  ✓ {ticker} 完成 ({len(text):,} 字符)")
         except subprocess.TimeoutExpired:
             msg = f"[分析超时 ({_TIMEOUT_STOCK}s) — 请手动补充 {ticker} 的分析]"
             responses.append({"label": f"个股深度分析: {ticker}", "text": msg})
+            stock_analyses.append((ticker, msg))
             errors.append(f"{ticker}: timeout after {_TIMEOUT_STOCK}s")
             print(f"  ⚠ {ticker} 超时，跳过继续...")
         except RuntimeError as e:
             msg = f"[分析失败: {e}]"
             responses.append({"label": f"个股深度分析: {ticker}", "text": msg})
+            stock_analyses.append((ticker, msg))
             errors.append(f"{ticker}: {e}")
             print(f"  ⚠ {ticker} 出错: {e}，跳过继续...")
 
         time.sleep(_INTER_TURN_SLEEP)
 
     # -------------------------------------------------------------------
-    # Final turn — Consolidated action plan
+    # Final turn — Consolidated action plan (Opus, fresh session)
+    # Inject global instructions + all Sonnet analyses as context so Opus
+    # gets full information without carrying the accumulated session weight.
     # -------------------------------------------------------------------
-    print(f"[{total_turns}/{total_turns}] 请求最终操作计划...")
+    print(f"[{total_turns}/{total_turns}] 请求最终操作计划 (Opus, 新 Session)...")
+
+    analyses_block = "\n\n".join(
+        f"### {ticker} 分析结果\n{analysis}"
+        for ticker, analysis in stock_analyses
+    )
+    opus_prompt = (
+        f"{global_file.read_text(encoding='utf-8')}\n\n"
+        f"---\n\n"
+        f"以下是各个股的深度分析结果（由 Sonnet 完成）：\n\n"
+        f"{analyses_block}\n\n"
+        f"---\n\n"
+        f"{final_file.read_text(encoding='utf-8')}"
+    )
+
     try:
         text, _ = _send_message(
-            final_file.read_text(encoding="utf-8"),
-            session_id=session_id,
+            opus_prompt,
+            model=_MODEL_FINAL,
+            session_id=None,   # fresh session — no accumulated context
             timeout=_TIMEOUT_FINAL,
             cli_path=cli_path,
+            effort="high",
         )
         responses.append({"label": "最终操作计划 (Final Action Plan)", "text": text})
         print(f"  ✓ 最终计划已生成 ({len(text):,} 字符)")
@@ -289,7 +319,7 @@ def generate_report(web_prompts_dir: Path | None = None) -> Path | None:
     # Assemble & save
     # -------------------------------------------------------------------
     today_str   = datetime.now().strftime("%Y%m%d")
-    output_path = FINAL_REPORTS_DIR / f"CLAUDE_opus_{today_str}.md"
+    output_path = FINAL_REPORTS_DIR / f"CLAUDE_hybrid_{today_str}.md"
     report      = _assemble_report(responses, web_prompts_dir, errors, session_id)
     output_path.write_text(report, encoding="utf-8")
 
