@@ -180,7 +180,7 @@ def generate_consolidated_api_prompt() -> str:
         # f.write(json.dumps(global_slice, indent=4, ensure_ascii=False))
         f.write(json.dumps(global_slice, ensure_ascii=False, separators=(',', ':')))
         f.write("\n```\n[重要指令]\n")
-        f.write("这是我的全局账户状态和你的分析任务。请回复：“收到，我已经清楚账户资金和风控底线。请提供个股数据，我将逐一进行极度深度的硬核拆解。”\n")
+        f.write("这是我的全局账户状态和你的分析任务，请根据提供数据生成持仓情况表格。生成完毕后请回复：“收到，我已经清楚账户资金和风控底线。请提供个股数据，我将逐一进行极度深度的硬核拆解。”\n")
         f.write("注意：在收到后续的个股数据前，请不要做任何分析！")
 
     # --- 第 2 到 N 口：个股数据切片 ---

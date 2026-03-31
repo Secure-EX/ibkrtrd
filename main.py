@@ -129,12 +129,26 @@ def main():
             print(f"❌ 终极聚合失败: {e}")
 
         # ---------------------------------------------------------
+        # 第四阶段：LLM 报告自动生成
+        # ---------------------------------------------------------
+        print("\n【第四阶段】调用 Claude CLI 自动生成分析报告...")
+        try:
+            from llm_report.report_generator import generate_report
+            generate_report()
+        except Exception as e:
+            print(
+                f"⚠️ LLM 报告生成失败，可手动运行:\n"
+                f"   python -m llm_report.report_generator\n"
+                f"   错误: {e}"
+            )
+
+        # ---------------------------------------------------------
         # 大功告成
         # ---------------------------------------------------------
         print("\n" + "="*54)
         print("🎉 全量化流水线执行完毕！")
         print("📁 所有的 Prompt 文本已经静静地躺在 data/latest 目录下了。")
-        print("👉 下一步：尽情把它们发给大模型，检验我们的火力吧！")
+        print("👉 分析报告已保存至 data/output/final_reports/")
         print("="*54 + "\n")
 
     finally:
