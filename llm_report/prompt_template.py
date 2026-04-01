@@ -166,7 +166,22 @@ def generate_consolidated_api_prompt() -> str:
     web_dir = LATEST_DIR / f"web_prompts_{today_str}"
     web_dir.mkdir(exist_ok=True) # 创建专属切片文件夹
 
-    # --- 第 1 口：全局设定与任务 ---
+    # --- 第 0 口：持仓情况表格（轻量独立轮，仅含持仓数据）---
+    portfolio_slice = {
+        "role": master_prompt["instructions"]["role"],
+        "language": master_prompt["instructions"]["language"],
+        "user_profile": master_prompt["user_profile"],
+        "global_portfolio_context": master_prompt["global_portfolio_context"],
+    }
+    with open(web_dir / "00_持仓情况表格.txt", 'w', encoding='utf-8') as f:
+        f.write("[Portfolio Status Table]\n")
+        f.write("请阅读以下账户持仓数据：\n```json\n")
+        f.write(json.dumps(portfolio_slice, ensure_ascii=False, separators=(',', ':')))
+        f.write("\n```\n[重要指令]\n")
+        f.write("请根据提供的持仓数据，生成账户持仓摘要，一张完整的持仓情况总览表格（包含：代码、公司、持仓量、均价、现价、市值、浮动盈亏金额、浮动盈亏比例、仓位占比、状态等关键字段），账户关键风险警示表格。\n")
+        f.write("生成完毕后请回复：'持仓表格已生成，准备接收全局设定与个股数据。'")
+
+    # --- 第 1 口：全局设定与任务（纯上下文参考，不触发分析）---
     global_slice = {
         "instructions": master_prompt["instructions"],
         "user_profile": master_prompt["user_profile"],
@@ -177,10 +192,9 @@ def generate_consolidated_api_prompt() -> str:
     with open(web_dir / "01_全局设定与指令.txt", 'w', encoding='utf-8') as f:
         f.write("[System Instructions & Global Context]\n")
         f.write("请阅读以下全局设定、账户资金状态以及最终的分析任务要求：\n```json\n")
-        # f.write(json.dumps(global_slice, indent=4, ensure_ascii=False))
         f.write(json.dumps(global_slice, ensure_ascii=False, separators=(',', ':')))
         f.write("\n```\n[重要指令]\n")
-        f.write("这是我的全局账户状态和你的分析任务，请根据提供数据生成持仓情况表格。生成完毕后请回复：“收到，我已经清楚账户资金和风控底线。请提供个股数据，我将逐一进行极度深度的硬核拆解。”\n")
+        f.write("这是全局账户状态和分析框架。请回复：'收到，我已经清楚账户资金和风控底线。请提供个股数据，我将逐一进行极度深度的硬核拆解。'\n")
         f.write("注意：在收到后续的个股数据前，请不要做任何分析！")
 
     # --- 第 2 到 N 口：个股数据切片 ---
@@ -198,11 +212,16 @@ def generate_consolidated_api_prompt() -> str:
             f.write("写完后，请提示我发送下一只股票的数据。")
 
     # --- 最终口：终极决断 ---
+    # 注意：此文件在自动化流程(report_generator.py)中由 Opus 全新 session 接收，
+    # 届时 global_context 和所有个股分析均已作为上下文注入同一 prompt，
+    # 无需依赖多轮记忆，直接引用"以上数据"即可。
     with open(web_dir / "03_终极决断与操作计划.txt", 'w', encoding='utf-8') as f:
         f.write("[Final Actionable Plan]\n")
-        f.write("所有标的已投喂完毕！\n[重要指令]\n")
-        f.write("现在，请你调取最初的“全局资金状态(Global Portfolio Context)”，结合你刚才进行的所有单股深度分析，给我出具一份包含明确股数、价位以及买卖逻辑的[最终操作计划表]。\n")
-        f.write("请确保总动用资金绝不超过我的可用现金，并且严格遵守马斯克的第一性原理。")
+        f.write("以上已提供：全局账户风控状态、所有持仓明细，以及每只个股的完整深度分析结果。\n")
+        f.write("[重要指令]\n")
+        f.write("请基于以上全部数据，综合全局资金状况与各标的分析结论，")
+        f.write("出具一份包含明确股数、参考价位和买卖逻辑的[最终操作计划表]。\n")
+        f.write("要求：总动用资金绝不超过可用现金；严格遵守马斯克的第一性原理；给出明确的[加仓/减仓/持有/止损]结论，不得模糊。")
 
     print(f"✅ 终极 API 聚合完毕！仅需发送此单一文件至大模型: {output_path.name}")
     print(f"📦 网页端投喂切片已生成至: {web_dir.name} (请按文件编号顺序复制给 AI 网页端)")

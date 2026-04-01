@@ -131,16 +131,16 @@ def main():
         # ---------------------------------------------------------
         # 第四阶段：LLM 报告自动生成
         # ---------------------------------------------------------
-        print("\n【第四阶段】调用 Claude CLI 自动生成分析报告...")
-        try:
-            from llm_report.report_generator import generate_report
-            generate_report()
-        except Exception as e:
-            print(
-                f"⚠️ LLM 报告生成失败，可手动运行:\n"
-                f"   python -m llm_report.report_generator\n"
-                f"   错误: {e}"
-            )
+        # print("\n【第四阶段】调用 Claude CLI 自动生成分析报告...")
+        # try:
+        #     from llm_report.report_generator import generate_report
+        #     generate_report()
+        # except Exception as e:
+        #     print(
+        #         f"⚠️ LLM 报告生成失败，可手动运行:\n"
+        #         f"   python -m llm_report.report_generator\n"
+        #         f"   错误: {e}"
+        #     )
 
         # ---------------------------------------------------------
         # 大功告成

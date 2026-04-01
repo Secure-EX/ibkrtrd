@@ -43,9 +43,9 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-_MODEL_STOCK      = "claude-sonnet-4-6"   # turns 1-N: global context + per-stock
-_MODEL_FINAL      = "claude-opus-4-6"     # final turn only: decision & action plan
-_TIMEOUT_TURN1    = 180   # seconds — acknowledgment is a short reply
+_MODEL_POSITION   = "claude-haiku-4-5-20251001"  # turn 0: portfolio table summary
+_MODEL_STOCK      = "claude-sonnet-4-6"          # turns 1-N: global context + per-stock
+_MODEL_FINAL      = "claude-opus-4-6"            # final turn only: decision & action plan
 _TIMEOUT_STOCK    = 600   # seconds — deep analysis per stock (~5 min)
 _TIMEOUT_FINAL    = 600   # seconds — consolidated action plan
 _INTER_TURN_SLEEP = 2     # seconds between turns
@@ -131,16 +131,15 @@ def _assemble_report(
     responses: list[dict],
     source_dir: Path,
     errors: list[str],
-    session_id: str | None,
 ) -> str:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines = [
         "# Claude 深度分析报告\n",
         f"- **生成时间**: {now}",
         f"- **数据来源**: `{source_dir.name}`",
+        f"- **持仓表格模型**: `{_MODEL_POSITION}`",
         f"- **个股分析模型**: `{_MODEL_STOCK}`",
         f"- **决策模型**: `{_MODEL_FINAL}`",
-        f"- **Session ID (Sonnet)**: `{session_id or 'unknown'}`",
     ]
     if errors:
         lines += [
@@ -191,10 +190,11 @@ def generate_report(web_prompts_dir: Path | None = None) -> Path | None:
     if web_prompts_dir is None:
         web_prompts_dir = find_latest_web_prompts()
 
-    all_files   = sorted(web_prompts_dir.glob("*.txt"))
-    global_file = next((f for f in all_files if f.name.startswith("01_")), None)
-    stock_files = sorted(f for f in all_files if f.name.startswith("02_"))
-    final_file  = next((f for f in all_files if f.name.startswith("03_")), None)
+    all_files     = sorted(web_prompts_dir.glob("*.txt"))
+    position_file = next((f for f in all_files if f.name.startswith("00_")), None)
+    global_file   = next((f for f in all_files if f.name.startswith("01_")), None)
+    stock_files   = sorted(f for f in all_files if f.name.startswith("02_"))
+    final_file    = next((f for f in all_files if f.name.startswith("03_")), None)
 
     if not global_file or not final_file:
         raise FileNotFoundError(
@@ -202,54 +202,71 @@ def generate_report(web_prompts_dir: Path | None = None) -> Path | None:
             f"Found: {[f.name for f in all_files]}"
         )
 
-    total_turns = 2 + len(stock_files)
-    responses:  list[dict]     = []
-    errors:     list[str]      = []
-    session_id: str | None     = None
+    total_turns = 1 + len(stock_files) + (1 if position_file else 0)
+    responses:  list[dict] = []
+    errors:     list[str]  = []
 
     print(f"\n{'='*54}")
-    print(f"  Claude Opus 自动报告生成")
+    print(f"  Claude 自动报告生成")
     print(f"  来源: {web_prompts_dir.name}")
-    print(f"  轮次: {total_turns} 轮 ({len(stock_files)} 只个股)")
+    position_desc = "1 Haiku 持仓表格 + " if position_file else ""
+    print(f"  轮次: {total_turns} 轮 (Sonnet {position_desc}{len(stock_files)} 只个股 + 1 Opus 终决)")
     print(f"{'='*54}\n")
 
     # -------------------------------------------------------------------
-    # Turn 1 — Global context; establishes the Sonnet session
+    # Turn 0 — Portfolio status table (Haiku, 独立首轮，仅持仓汇总)
     # -------------------------------------------------------------------
-    print(f"[1/{total_turns}] 发送全局设定，等待确认 (Sonnet)...")
-    try:
-        text, session_id = _send_message(
-            global_file.read_text(encoding="utf-8"),
-            model=_MODEL_STOCK,
-            timeout=_TIMEOUT_TURN1,
-            cli_path=cli_path,
-        )
-        responses.append({"label": "全局设定确认 (Acknowledgment)", "text": text})
-        print(f"  ✓ Session 建立: {session_id[:20]}...")
-    except subprocess.TimeoutExpired:
-        raise RuntimeError(
-            "Turn 1 (global context) timed out — cannot continue without a session."
-        )
-    except RuntimeError:
-        raise   # Re-raise; no session → nothing to resume
+    turn_offset = 0
+    if position_file:
+        turn_offset = 1
+        print(f"[1/{total_turns}] 生成持仓情况表格 (Haiku, 独立 Session)...")
+        try:
+            text, _ = _send_message(
+                position_file.read_text(encoding="utf-8"),
+                model=_MODEL_POSITION,
+                session_id=None,
+                timeout=_TIMEOUT_STOCK,
+                cli_path=cli_path,
+            )
+            responses.append({"label": "持仓情况总览表格", "text": text})
+            print(f"  ✓ 持仓表格已生成 ({len(text):,} 字符)")
+        except subprocess.TimeoutExpired:
+            msg = f"[持仓表格生成超时 ({_TIMEOUT_STOCK}s)]"
+            responses.append({"label": "持仓情况总览表格", "text": msg})
+            errors.append(f"Portfolio table: timeout after {_TIMEOUT_STOCK}s")
+            print(f"  ⚠ 持仓表格超时，跳过继续...")
+        except RuntimeError as e:
+            msg = f"[持仓表格生成失败: {e}]"
+            responses.append({"label": "持仓情况总览表格", "text": msg})
+            errors.append(f"Portfolio table: {e}")
+            print(f"  ⚠ 持仓表格出错: {e}，跳过继续...")
+        time.sleep(_INTER_TURN_SLEEP)
 
     # -------------------------------------------------------------------
-    # Turns 2-N — Per-stock deep analysis (Sonnet)
+    # Per-stock deep analysis (Sonnet) — each stock uses a FRESH session
+    # Global context is prepended to every stock prompt to avoid cumulative
+    # context buildup that would cause token limit errors on later stocks.
     # -------------------------------------------------------------------
+    global_text = global_file.read_text(encoding="utf-8")
     stock_analyses: list[tuple[str, str]] = []   # (ticker, analysis_text)
 
-    for i, stock_file in enumerate(stock_files, start=2):
+    for i, stock_file in enumerate(stock_files, start=1 + turn_offset):
         # Filename pattern: 02_01_个股数据_0700.HK.txt
         # Extract ticker from the last underscore-delimited segment of the stem
         stem_parts = stock_file.stem.split("_")
         ticker = stem_parts[-1] if len(stem_parts) >= 4 else stock_file.stem
 
-        print(f"[{i}/{total_turns}] 分析 {ticker} (Sonnet)...")
+        print(f"[{i}/{total_turns}] 分析 {ticker} (Sonnet, 独立 Session)...")
+        combined_prompt = (
+            global_text
+            + "\n\n---\n\n"
+            + stock_file.read_text(encoding="utf-8")
+        )
         try:
-            text, session_id = _send_message(
-                stock_file.read_text(encoding="utf-8"),
+            text, _ = _send_message(
+                combined_prompt,
                 model=_MODEL_STOCK,
-                session_id=session_id,
+                session_id=None,   # fresh session per stock — no context accumulation
                 timeout=_TIMEOUT_STOCK,
                 cli_path=cli_path,
             )
@@ -320,7 +337,7 @@ def generate_report(web_prompts_dir: Path | None = None) -> Path | None:
     # -------------------------------------------------------------------
     today_str   = datetime.now().strftime("%Y%m%d")
     output_path = FINAL_REPORTS_DIR / f"CLAUDE_hybrid_{today_str}.md"
-    report      = _assemble_report(responses, web_prompts_dir, errors, session_id)
+    report      = _assemble_report(responses, web_prompts_dir, errors)
     output_path.write_text(report, encoding="utf-8")
 
     status = "⚠️ 部分错误" if errors else "✅"
