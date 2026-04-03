@@ -4,6 +4,7 @@ import math
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
+from processors.sentiment_calc import generate_sentiment_summary
 
 # 提升根目录优先级，确保能无缝读取 config
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -69,6 +70,14 @@ def assemble_llm_payload(ticker_symbol: str) -> dict:
             payload["technicals"] = tech_data
     except Exception as e:
         print(f"   ❌ 技术面挂载失败: {e}")
+
+    # 4. 新闻与舆情 (News & Sentiment)
+    try:
+        sentiment_data = generate_sentiment_summary(ticker_symbol)
+        if sentiment_data:
+            payload["news_sentiment"] = sentiment_data
+    except Exception as e:
+        print(f"   ❌ 新闻舆情挂载失败: {e}")
 
     safe_payload = sanitize_for_web(payload, precision=6)
 

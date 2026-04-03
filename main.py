@@ -110,6 +110,13 @@ def main():
 
                 time.sleep(1)
 
+                print(f"   ▶ [2/3c] 拉取近期新闻与舆情 (News)...")
+                try:
+                    from data_pull.news_api import fetch_stock_news
+                    fetch_stock_news(standard_symbol)
+                except Exception as e:
+                    print(f"   ⚠️ 新闻拉取失败，将跳过舆情分析: {e}")
+
                 print(f"   ▶ [3/3] 组装终极 LLM 数据载荷 (JSON)...")
                 assemble_llm_payload(standard_symbol)
 
