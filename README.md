@@ -1,88 +1,135 @@
-# 📈 Portfolio Analysis Assistant (私人投顾)
+# Portfolio Analysis Assistant (私人投顾)
 
 [![Python](https://img.shields.io/badge/Python-3.12-blue)](https://www.python.org/)
 [![IBKR API](https://img.shields.io/badge/IBKR-TWS%20API-red)](https://interactivebrokers.github.io/tws-api/)
 
-## 📖 项目简介 (Introduction)
+## 项目简介
 
-这是一个基于 Python 的轻量级个人量化投研系统，专为**周频交易者**设计。它通过 `ib_insync` 连接 Interactive Brokers (IBKR) 获取即时账户与持仓数据，从 `yfinance` 和 `akshare` 拉取基本面及日交易情况，使用 `pandas_ta` 进行本地技术面分析，并引入 Gemini 辅助解读。
+基于 Python 的轻量级个人量化投研系统，专为**港股周频交易者**设计。
 
-**核心目标**：自动化数据获取流程，提供客观的技术指标分析，并执行严格的交易纪律风控（止损/仓位管理）。
+**核心工作流**：连接 IBKR 自动获取持仓 → 批量拉取量价/财报/新闻数据 → 本地计算技术与基本面指标 → 组装 LLM 分析载荷 → 粘贴至 Claude/Gemini/Grok 生成中文研报。
 
-## ✨ 主要功能 (Features)
+---
 
-- **🔌 IBKR 无缝连接**：自动连接 TWS/Gateway，获取港股实时行情。
-- **🔬 基本面分析**：获取基本面估值 (PE/PB) 等。
-- **📊 多维技术分析**：
-  - 自动计算 MA (10/20/30/60/120/250)、MACD、RSI、KDJ、BOLL (日线/周线/月线) 等。
-  - **走势判定**：自动识别多头/空头排列。
-  - **估值分位**：基于过去3年价格计算 Price Percentile。
-- **💼 持仓透视**：一键导出当前持仓、平均成本、未实现盈亏，分析持仓健康度。
-- **🚦 信号生成系统**：基于技术指标的评分机制，输出 Buy/Sell/Wait 建议。
-- **📉 风险控制**：自动监测止损位，触发风控预警。
+## 主要功能
 
-## 🛠️ 技术栈 (Tech Stack)
+| 模块 | 功能 |
+|------|------|
+| **IBKR 连接** | 自动连接 TWS/Gateway，获取实时持仓快照、OHLCV K线 |
+| **多源数据拉取** | yfinance (财报/基本面底线) + AkShare (东方财富覆盖) + 新闻舆情聚合 |
+| **技术分析** | MA (10/20/30/60/120/250)、MACD、RSI、KDJ、BOLL（日/周/月三级别），自动判定多空排列，计算3年估值分位 |
+| **基本面分析** | 财报三表清洗、Z-Score、DCF 估值、各类利润率计算 |
+| **风险管理** | 账户级风控报告（胜率、赔率、最大回撤、止损位监测） |
+| **LLM 载荷组装** | 将所有分析数据聚合为结构化 JSON + Prompt，供 Claude/Gemini/Grok 直读 |
 
-- **核心语言**: Python 3.12
-- **交易接口**: `ib_insync` (这也是 TWS API 的最佳封装)
-- **数据分析**: `pandas`, `pandas-ta`, `yfinance`, `akshare` (用于补充 PE/PB 数据)
-- **未来计划**: `Streamlit` (可视化仪表盘), `Local LLM` (Qwen/DeepSeek 用于财报分析)
+---
 
-## 🚀 快速开始 (Quick Start)
+## 项目结构
 
-### 0. 📂 项目结构 (Structure)
 ```
-IBKR Portfolio Analysis Assistant/
-├── README.md                          # 项目说明文档
-├── .env                               # 存放敏感信息 (IBKR Account, Ports, Client ID, Gemini/Grok API Keys等)
-├── .gitignore                         # 忽略数据文件夹和 .env 推送
-├── config.py                          # 全局业务参数 (回溯年限设定、重试次数等)
-├── main.py                            # 主程序入口 (流水线调度器)
-├── requirements.txt                   # 模组列表
-├── user_notes.json                    # 用户个人对每个股票的思考，近期交易信息，或者网上手动摘取的文本信息
+ibkrtrd/
+├── main.py                    # 主程序入口，四阶段流水线调度器
+├── config.py                  # 全局参数 (路径、API密钥、回溯年限等)
+├── requirements.txt
+├── user_notes.json            # 用户手动录入的个股备注、交易信息、摘抄文本
 │
-├── data_pull/                         # Extract 数据提取层
-│   ├── __init__.py
-│   ├── ibkr_api.py                    # 专职拉取持仓快照与交易流水
-│   ├── yfinance_api.py                # 专职拉取财报、基本面画像，如果akshare崩溃作为备用拉取引擎
-│   └── akshare_api.py                 # 专职拉取 15年日线量价等
+├── data_pull/                 # [第一层] 数据提取
+│   ├── ibkr_api.py            # IBKR 持仓快照 + K线主引擎
+│   ├── yfinance_api.py        # 财报/基本面底线 + K线备用引擎
+│   ├── akshare_api.py         # 东方财富财报数据（覆盖 yfinance）
+│   └── news_api.py            # 新闻与舆情拉取（东方财富 + Google News）
 │
-├── processors/                        # Transform 数据转换层
-│   ├── __init__.py
-│   ├── fundamental_calc.py            # 清洗财报，计算 Z-Score, DCF, 各种 Margin
-│   ├── json_assembler.py              # 负责把算好的各个模块组装成终极大 JSON
-│   ├── risk_calc.py                   # 账户级风控 (计算系统的胜率、赔率、最大回撤)
-│   ├── technical_calc.py              # 重采样周/月线，计算 MA, MACD, BOLL 等
-│   └── transaction_parser.py          # 组装交易数据
+├── processors/                # [第二层] 数据处理与分析
+│   ├── fundamental_calc.py    # 财报清洗、Z-Score、DCF、Margin 计算
+│   ├── technical_calc.py      # K线重采样，技术指标主调度
+│   ├── technical_indicators.py
+│   ├── technical_financial.py
+│   ├── technical_market.py
+│   ├── technical_multifactor.py
+│   ├── technical_risk.py
+│   ├── technical_utils.py
+│   ├── risk_calc.py           # 账户级风控报告
+│   ├── sentiment_calc.py      # 情绪与新闻评分
+│   ├── transaction_parser.py  # 交易流水组装
+│   └── json_assembler.py      # 将各模块聚合为终极 LLM 载荷 JSON
 │
-├── llm_report/                        # Load 数据加载与输出层
-│   ├── __init__.py
-│   ├── prompt_templates.py            # 存放调教 Gemini / Grok 的系统提示词模板
-│   └── report_generator.py            # 发送 JSON 给 LLM 并保存返回的 markdown 报告
+├── llm_report/                # [第三层] 报告与 Prompt 生成
+│   ├── prompt_template.py     # 系统提示词模板（中文深度研报格式）
+│   └── report_generator.py    # 调用 Claude CLI 自动保存 Markdown 报告
 │
-└── data/                              # 本地数据中心 (未来无缝迁移 Postgres)
-    ├── input/                         # 纯粹的原始数据 - CSV
-    │   ├── financials/                # 原始财报三表 (年报 半年报 季报) 数据，现金流、收入数据
-    │   ├── ohlcv/                     # Open-High-Low-Close-Volume 个股与大盘 (未开发) 的原始日 K 线
-    │   ├── portfolio/                 # 按 yyyymmdd 存放 IBKR 持仓
-    │   ├── sentiment/                 # 原始每日沽空与情绪数据 (未开发)
-    │   └── transactions/              # IBKR 交易流水，合成所有独立交易为单一文件进行读取
-    │
-    └── output/                        # 加工完毕的成品 - JSON
-        ├── _archive/                  # 手动从latest文件夹备份
-        ├── final_reports/             # Gemini 最终输出的中文投资分析报告
-        └── latest/                    # [重点] 永远只存全景更新的唯一真理 (如 0700.HK_LLM_Payload.json)，供大模型直读
-            └── web_prompts_yyyymmdd/  # 网页切分json方便上传减少token使用
+└── data/
+    ├── input/
+    │   ├── ohlcv/             # 个股日K线 CSV（15年回溯）
+    │   ├── financials/        # 财报三表 CSV（年报/季报）
+    │   ├── portfolio/         # IBKR 持仓快照（按日）
+    │   ├── transactions/      # 交易流水汇总
+    │   └── sentiment/         # 沽空与情绪原始数据
+    └── output/
+        ├── latest/            # [核心] 最新单股 LLM 载荷 JSON（如 0700.HK_LLM_Payload.json）
+        │   └── web_prompts_yyyymmdd/  # 切分后的小 JSON（减少粘贴 token）
+        ├── final_reports/     # LLM 输出的 Markdown 研报
+        └── _archive/          # 手动冷备份
 ```
 
-### 1. 🌏 环境要求 (Environment)
-- 操作系统: Windows / macOS / Linux (本项目在 i7-6700 Windows 环境下优化测试)
-- 已安装 [IBKR TWS (Trader Workstation)](https://www.interactivebrokers.com/en/trading/tws.php) 或 IB Gateway。
+---
 
-### 2. 🎁 主要安装依赖 (Major Dependency)
+## 快速开始
+
+### 1. 环境依赖
+
+- Python 3.12
+- 已安装并登录 [IBKR TWS](https://www.interactivebrokers.com/en/trading/tws.php) 或 IB Gateway（端口 7496 实盘 / 7497 模拟）
+
 ```bash
-pip install ib_insync pandas pandas_ta yfinance akshare
+pip install -r requirements.txt
 ```
 
-### ⚠️ 免责声明 (Disclaimer)
-本项目仅用于编程学习与辅助分析，不构成任何投资建议。金融市场有风险，自动化交易可能导致资金损失，请谨慎使用。开发者不对因使用本项目产生的任何盈亏负责。
+### 2. 配置 `.env`
+
+在项目根目录创建 `.env` 文件：
+
+```env
+IBKR_ACCOUNT_ID=your_account_id
+IBKR_HOST=127.0.0.1
+IBKR_PORT=7496
+IBKR_CLIENT_ID=1
+
+CLAUDE_API_KEY=your_claude_key
+GEMINI_API_KEY=your_gemini_key
+GROK_API_KEY=your_grok_key
+```
+
+### 3. 运行
+
+```bash
+python main.py
+```
+
+**四阶段流水线**：
+
+1. **第零阶段** — 拉取恒生指数/科技指数大盘参照数据
+2. **第一阶段** — IBKR 账户扫描，生成账户风控报告
+3. **第二阶段** — 持仓标的逐个处理（OHLCV → 财报 → 新闻 → JSON 组装）
+4. **第三阶段** — 将所有单股 JSON 聚合为终极 API Prompt
+
+完成后，将 `data/output/latest/` 下的 JSON 或 Prompt 文本粘贴至 Claude/Gemini/Grok 网页端生成研报。
+
+---
+
+## 关键配置参数（config.py）
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `LOOKBACK_YEARS` | 15 | K线历史回溯年限（覆盖完整牛熊周期） |
+| `FINANCIAL_REPORT_YEARS` | 4 | 喂给 LLM 的年度财报数量 |
+| `FINANCIAL_REPORT_QTERS` | 8 | 喂给 LLM 的季报数量 |
+| `RISK_FREE_RATE` | 0.04 | 夏普比率无风险利率假设 |
+| `INDEX_SYMBOLS` | `^HSI`, `3033.HK` | 大盘参照指数 |
+
+---
+
+## 免责声明
+
+> 反正开发者也还没赚钱，图一乐。
+
+本项目仅用于编程学习与个人辅助分析，不构成任何投资建议。金融市场存在风险，开发者不对因使用本项目产生的任何盈亏负责。
