@@ -32,6 +32,7 @@ from processors.technical_indicators import (
 )
 from processors.technical_multifactor import calc_multifactor_risk
 from processors.technical_risk import _assess_resonance
+from processors.technical_utils import _align_financial_to_daily, _get_dynamic_col
 
 
 @dataclass
@@ -71,6 +72,19 @@ class SignalSnapshot:
     factor_technical: Optional[float] = None
     factor_capital_flow: Optional[float] = None
 
+    # ---- 估值均值回归（Valuation Mean Reversion）----
+    pe_zscore: Optional[float] = None       # PE Z-score（3年滚动窗口）
+    pb_zscore: Optional[float] = None       # PB Z-score（3年滚动窗口）
+
+    # ---- 双动量（Dual Momentum）----
+    return_12m: Optional[float] = None      # 12个月绝对回报
+
+    # ---- ATR 趋势跟踪（ATR Trend Following）----
+    kama_value: Optional[float] = None      # Kaufman 自适应均线值
+    kama_direction: Optional[str] = None    # "up" | "down" | "flat"
+    volume_breakout: Optional[bool] = None  # 成交量 > 1.5 倍 20日均量
+    atr_value: Optional[float] = None       # 当日 ATR(14)
+
     # ---- 原始指标值（供自定义策略访问）----
     raw: Dict[str, Any] = field(default_factory=dict)
 
@@ -108,6 +122,49 @@ class SignalEngine:
         print("  [SignalEngine] 预计算技术指标...", end=" ", flush=True)
         self._df = _add_technical_indicators(df_ohlcv.copy())
         print(f"完成，共 {len(self._df)} 行，{len(self._df.columns)} 列")
+
+    def _calc_valuation_zscores(
+        self, df_slice: pd.DataFrame, window: int = 756
+    ) -> tuple:
+        """
+        计算 PE/PB 的 Z-score（均值回归策略核心指标）。
+
+        Z = (current_val - rolling_mean) / rolling_std
+        window 默认 756 天 ≈ 3 年。
+
+        返回: (pe_zscore, pb_zscore)，无数据时返回 None。
+        """
+        pe_z, pb_z = None, None
+
+        if self._eps is not None and not self._eps.empty:
+            eps_aligned = _align_financial_to_daily(self._eps, df_slice.index)
+            pe = df_slice['Close'] / eps_aligned.replace(0, np.nan)
+            pe = pe.dropna()
+            if len(pe) >= window:
+                pe_tail = pe.tail(window)
+                mu, sigma = pe_tail.mean(), pe_tail.std()
+                if sigma > 0:
+                    pe_z = float((pe_tail.iloc[-1] - mu) / sigma)
+            elif len(pe) >= 60:
+                mu, sigma = pe.mean(), pe.std()
+                if sigma > 0:
+                    pe_z = float((pe.iloc[-1] - mu) / sigma)
+
+        if self._bvps is not None and not self._bvps.empty:
+            bvps_aligned = _align_financial_to_daily(self._bvps, df_slice.index)
+            pb = df_slice['Close'] / bvps_aligned.replace(0, np.nan)
+            pb = pb.dropna()
+            if len(pb) >= window:
+                pb_tail = pb.tail(window)
+                mu, sigma = pb_tail.mean(), pb_tail.std()
+                if sigma > 0:
+                    pb_z = float((pb_tail.iloc[-1] - mu) / sigma)
+            elif len(pb) >= 60:
+                mu, sigma = pb.mean(), pb.std()
+                if sigma > 0:
+                    pb_z = float((pb.iloc[-1] - mu) / sigma)
+
+        return pe_z, pb_z
 
     def compute_at(self, date: pd.Timestamp) -> SignalSnapshot:
         """
@@ -153,6 +210,54 @@ class SignalEngine:
         # ---- 子因子明细 ----
         factors = long_risk_dict.get("factors", {})
 
+        # ---- 估值 Z-score（均值回归策略）----
+        pe_zscore, pb_zscore = self._calc_valuation_zscores(df_slice)
+
+        # ---- 12 个月绝对回报（双动量策略）----
+        return_12m = None
+        if len(df_slice) >= 252:
+            return_12m = float(
+                df_slice['Close'].iloc[-1] / df_slice['Close'].iloc[-252] - 1
+            )
+
+        # ---- KAMA / 成交量突破 / ATR（趋势跟踪策略）----
+        kama_value, kama_direction, volume_breakout, atr_value = (
+            None, None, None, None
+        )
+
+        # KAMA
+        kama_col = _get_dynamic_col(df_slice, 'KAMA')
+        if kama_col and kama_col in df_slice.columns:
+            kv = latest.get(kama_col)
+            if kv is not None and not (isinstance(kv, float) and np.isnan(kv)):
+                kama_value = float(kv)
+                # KAMA 方向：对比5日前
+                if len(df_slice) >= 6:
+                    kama_prev = df_slice[kama_col].iloc[-6]
+                    if not (isinstance(kama_prev, float) and np.isnan(kama_prev)):
+                        diff_pct = (kama_value - float(kama_prev)) / float(kama_prev)
+                        if diff_pct > 0.005:
+                            kama_direction = "up"
+                        elif diff_pct < -0.005:
+                            kama_direction = "down"
+                        else:
+                            kama_direction = "flat"
+
+        # 成交量突破
+        vol = latest.get('Volume')
+        if vol is not None and len(df_slice) >= 20:
+            ma_vol = df_slice['Volume'].tail(20).mean()
+            if ma_vol > 0:
+                volume_breakout = bool(float(vol) > 1.5 * ma_vol)
+
+        # ATR
+        for atr_col_name in ['ATRr_14', 'ATR_14']:
+            if atr_col_name in df_slice.columns:
+                av = latest.get(atr_col_name)
+                if av is not None and not (isinstance(av, float) and np.isnan(av)):
+                    atr_value = float(av)
+                    break
+
         # ---- 原始指标值 ----
         raw = {}
         for col in ['RSI_14', 'MACD_12_26_9', 'MACDs_12_26_9',
@@ -187,6 +292,13 @@ class SignalEngine:
             factor_volatility=factors.get("volatility"),
             factor_technical=factors.get("technical"),
             factor_capital_flow=factors.get("capital_flow"),
+            pe_zscore=pe_zscore,
+            pb_zscore=pb_zscore,
+            return_12m=return_12m,
+            kama_value=kama_value,
+            kama_direction=kama_direction,
+            volume_breakout=volume_breakout,
+            atr_value=atr_value,
             raw=raw,
         )
 

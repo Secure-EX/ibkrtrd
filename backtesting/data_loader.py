@@ -4,17 +4,23 @@ data_loader.py — 离线数据加载模块
 从磁盘读取 CSV 数据，不发起任何网络请求。
 复用 processors.technical_financial.load_financial_series() 加载 EPS/BVPS。
 
+注意：OHLCV 数据由 IBKR（whatToShow='TRADES'）拉取，为前复权（split-adjusted）数据。
+      技术指标和价格百分位计算在前复权数据上是正确的。
+      不含股息复权，高分红股票（如CNOOC）的总回报可能略低于实际值。
+
 公开函数:
     load_ohlcv(ticker, ohlcv_dir)       → pd.DataFrame（日K线，DateTimeIndex）
     load_index_ohlcv(benchmark, ohlcv_dir) → pd.DataFrame（指数日K线）
     load_financials(ticker, fin_dir)    → (eps_series, bvps_series)
     list_available_tickers(ohlcv_dir)   → List[str]
+    load_board_lot(ticker, portfolio_dir) → int（每手股数）
 """
 
 import sys
 import pandas as pd
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict
+from processors.technical_financial import load_financial_series
 
 _BASE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_BASE))
@@ -97,7 +103,6 @@ def load_financials(
     返回: (eps_series, bvps_series)，若无数据则对应位置返回 None
     """
     try:
-        from processors.technical_financial import load_financial_series
         eps, bvps = load_financial_series(ticker, financial_dir=financials_dir)
         return eps, bvps
     except Exception as e:
@@ -118,3 +123,58 @@ def list_available_tickers(ohlcv_dir: Path) -> List[str]:
             continue
         tickers.append(stem)
     return tickers
+
+
+# 港股每手股数硬编码备份（CSV 不可用时的 fallback）
+_BOARD_LOT_DEFAULTS: Dict[str, int] = {
+    "0700.HK": 100, "0881.HK": 500, "0883.HK": 1000,
+    "2015.HK": 100, "2367.HK": 200, "2400.HK": 200, "9992.HK": 200,
+}
+
+
+def _normalize_ticker(symbol: str) -> str:
+    """将 CSV 中的 Symbol（如 '700', '9992'）标准化为 '0700.HK' 格式。"""
+    s = symbol.strip()
+    if s.endswith(".HK"):
+        num_part = s[:-3]
+    else:
+        num_part = s
+    return f"{num_part.zfill(4)}.HK"
+
+
+def load_board_lots(portfolio_dir: Path) -> Dict[str, int]:
+    """
+    从最新的 current_positions_*.csv 加载所有股票的每手股数。
+
+    返回: {"0700.HK": 100, "0883.HK": 1000, ...}
+    """
+    csv_files = sorted(portfolio_dir.glob("current_positions_*.csv"), reverse=True)
+    if not csv_files:
+        print("  [DataLoader] ⚠️  未找到持仓CSV，使用默认 Board Lot")
+        return dict(_BOARD_LOT_DEFAULTS)
+
+    path = csv_files[0]
+    try:
+        df = pd.read_csv(path)
+        if 'Symbol' not in df.columns or 'Board Lot' not in df.columns:
+            print(f"  [DataLoader] ⚠️  CSV 缺少 Symbol/Board Lot 列: {path.name}")
+            return dict(_BOARD_LOT_DEFAULTS)
+
+        result = {}
+        for _, row in df.iterrows():
+            ticker = _normalize_ticker(str(row['Symbol']))
+            lot = int(float(row['Board Lot']))
+            result[ticker] = lot
+
+        print(f"  [DataLoader] ✅ Board Lot 已加载 ({path.name}): {result}")
+        return result
+    except Exception as e:
+        print(f"  [DataLoader] ⚠️  加载 Board Lot 失败: {e}")
+        return dict(_BOARD_LOT_DEFAULTS)
+
+
+def load_board_lot(ticker: str, portfolio_dir: Path) -> int:
+    """加载单只股票的每手股数。"""
+    lots = load_board_lots(portfolio_dir)
+    lot = lots.get(ticker, _BOARD_LOT_DEFAULTS.get(ticker, 100))
+    return lot

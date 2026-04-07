@@ -36,12 +36,15 @@ _BASE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_BASE))
 
 from backtesting.config_bt import BacktestConfig
-from backtesting.data_loader import load_ohlcv, load_index_ohlcv, load_financials, list_available_tickers
+from backtesting.data_loader import load_ohlcv, load_index_ohlcv, load_financials, list_available_tickers, load_board_lot
 from backtesting.signal_engine import SignalEngine
-from backtesting.strategy import create_strategy
+from backtesting.strategy import create_strategy, SignalConfirmationFilter
 from backtesting.simulator import Simulator
+from backtesting.simulator import DynamicStopLoss
 from backtesting.performance import calculate_performance
 from backtesting.report import generate_report
+from config import OHLCV_DIR
+
 
 try:
     # 复用现有的 _load_index_data（从 processors/technical_market.py）
@@ -65,12 +68,19 @@ def run_backtest(
     rebalance_freq: str = "weekly",
     warmup_days: int = 260,
     plot: bool = False,
-    board_lot: int = 100,
+    board_lot: Optional[int] = None,
+    pyramid: bool = False,
+    confirmation_weeks: int = 0,
+    dynamic_stop: bool = True,
+    stock_type: Optional[str] = None,
+    z_buy: float = -1.5,
+    z_sell: float = 1.5,
 ) -> Dict[str, Any]:
     """
     运行单标的回测，返回绩效指标字典。
 
     参数均有合理默认值，与 MultifactorRiskStrategy 对应。
+    board_lot=None 时自动从持仓 CSV 检测每手股数。
     """
     print(f"\n{'='*60}")
     print(f"  回测: {ticker} | {strategy_name} | {start_date} ~ {end_date or '最新'}")
@@ -83,7 +93,13 @@ def run_backtest(
         "stop_loss_pct": stop_loss_pct,
         "short_term_filter": short_term_filter,
         "short_term_buy_max": 0.80,
+        "z_buy_threshold": z_buy,
+        "z_sell_threshold": z_sell,
+        "risk_free_rate": 0.04,
     }
+
+    # 自动检测股票类型
+    resolved_stock_type = stock_type or DynamicStopLoss.get_stock_type(ticker)
 
     config = BacktestConfig(
         ticker=ticker,
@@ -96,7 +112,16 @@ def run_backtest(
         max_tranches=max_tranches,
         rebalance_freq=rebalance_freq,
         warmup_days=warmup_days,
+        position_sizing_mode="pyramid" if pyramid else "equal",
+        signal_confirmation_periods=confirmation_weeks,
+        use_dynamic_stop=dynamic_stop,
+        stock_type=resolved_stock_type,
     )
+
+    # ---- 自动检测 Board Lot ----
+    if board_lot is None:
+        board_lot = load_board_lot(ticker, config.portfolio_dir)
+    print(f"  Board Lot: {board_lot} 股/手")
 
     # ---- 加载数据 ----
     print(f"\n[1/5] 加载数据...")
@@ -123,6 +148,13 @@ def run_backtest(
     # ---- 创建策略 ----
     print(f"\n[3/5] 创建策略: {strategy_name}")
     strategy = create_strategy(strategy_name, config.strategy_params)
+
+    # 信号确认过滤器
+    if config.signal_confirmation_periods > 0:
+        strategy = SignalConfirmationFilter(
+            strategy, confirmation_periods=config.signal_confirmation_periods
+        )
+        print(f"  信号确认: 需连续 {config.signal_confirmation_periods} 个决策日")
 
     # ---- 运行模拟 ----
     print(f"\n[4/5] 运行 Walk-Forward 模拟...")
@@ -198,7 +230,8 @@ def main():
     parser.add_argument("--ticker", type=str, help="股票代码，如 0700.HK")
     parser.add_argument("--all", action="store_true", help="对所有可用股票运行回测")
     parser.add_argument("--strategy", type=str, default="multifactor_risk",
-                        choices=["multifactor_risk", "technical_momentum", "composite", "custom"],
+                        choices=["multifactor_risk", "technical_momentum", "composite",
+                                 "custom", "valuation_reversion", "dual_momentum", "atr_trend"],
                         help="策略名称（默认: multifactor_risk）")
     parser.add_argument("--start", type=str, default="2015-01-01", help="回测起始日期")
     parser.add_argument("--end", type=str, default=None, help="回测结束日期（默认：最新）")
@@ -217,15 +250,29 @@ def main():
                         help="调仓频率（默认: weekly）")
     parser.add_argument("--warmup", type=int, default=260,
                         help="信号热身天数（默认 260 ≈ 1年）")
-    parser.add_argument("--board-lot", type=int, default=100,
-                        help="每手股数（默认 100）")
+    parser.add_argument("--board-lot", type=int, default=None,
+                        help="每手股数（默认自动检测，从持仓CSV或内置表）")
+    parser.add_argument("--pyramid", action="store_true",
+                        help="启用金字塔建仓（首批最小，逐批递增，自动适配）")
+    parser.add_argument("--confirmation-weeks", type=int, default=0,
+                        help="信号确认周数（默认 0=禁用，3=需连续3周信号才建仓）")
+    parser.add_argument("--dynamic-stop", action="store_true", default=True,
+                        help="启用ATR动态止损（默认启用）")
+    parser.add_argument("--no-dynamic-stop", dest="dynamic_stop", action="store_false",
+                        help="禁用动态止损，使用固定止损")
+    parser.add_argument("--stock-type", type=str, default=None,
+                        choices=["blue_chip", "growth", "high_volatility"],
+                        help="股票类型（影响止损宽度，默认自动分类）")
+    parser.add_argument("--z-buy", type=float, default=-1.5,
+                        help="估值回归策略：买入Z-score阈值（默认 -1.5）")
+    parser.add_argument("--z-sell", type=float, default=1.5,
+                        help="估值回归策略：卖出Z-score阈值（默认 1.5）")
     parser.add_argument("--plot", action="store_true", help="生成可视化图表")
 
     args = parser.parse_args()
 
     if args.all:
         # 批量运行所有可用股票
-        from config import OHLCV_DIR
         tickers = list_available_tickers(OHLCV_DIR)
         print(f"发现 {len(tickers)} 只股票: {tickers}")
         all_metrics = {}
@@ -246,6 +293,12 @@ def main():
                     warmup_days=args.warmup,
                     plot=args.plot,
                     board_lot=args.board_lot,
+                    pyramid=args.pyramid,
+                    confirmation_weeks=args.confirmation_weeks,
+                    dynamic_stop=args.dynamic_stop,
+                    stock_type=args.stock_type,
+                    z_buy=args.z_buy,
+                    z_sell=args.z_sell,
                 )
                 all_metrics[t] = {
                     "annualized_return_pct": m.get("annualized_return_pct"),
@@ -277,6 +330,12 @@ def main():
             warmup_days=args.warmup,
             plot=args.plot,
             board_lot=args.board_lot,
+            pyramid=args.pyramid,
+            confirmation_weeks=args.confirmation_weeks,
+            dynamic_stop=args.dynamic_stop,
+            stock_type=args.stock_type,
+            z_buy=args.z_buy,
+            z_sell=args.z_sell,
         )
     else:
         parser.print_help()

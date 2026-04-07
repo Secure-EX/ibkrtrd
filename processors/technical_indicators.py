@@ -4,7 +4,7 @@ technical_indicators.py — 技术指标计算模块
 包含内容：
     - _add_technical_indicators  : 批量为 OHLCV DataFrame 添加技术指标
           计算的指标：MA(5/10/20/30/60/120/250)、MACD(12,26,9)、RSI(14)、
-          KDJ(9,3)、BOLL(20,2)、ATR(14)、VWAP_Custom
+          KDJ(9,3)、BOLL(20,2)、ATR(14)、KAMA(10,2,30)、VWAP_Custom
     - _calc_trend_signals        : 基于已有指标生成确定性研判信号
           信号包含：均线多空排列、价格相对MA位置、MACD金叉/死叉、
           RSI区间、KDJ区间、布林带位置
@@ -55,7 +55,11 @@ def _add_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # 6. 波动指标: ATR (14) -> 生成列: ATRr_14
     df.ta.atr(length=14, append=True)
 
-    # 7. 计算当期 VWAP (成交量加权平均价) = 当期总成交额 / 当期总成交量
+    # 7. 自适应均线: KAMA (10, 2, 30) -> 生成列: KAMA_10_2_30
+    # Kaufman Adaptive Moving Average: 在趋势明确时快速跟随，在震荡时平滑过滤
+    df.ta.kama(length=10, fast=2, slow=30, append=True)
+
+    # 8. 计算当期 VWAP (成交量加权平均价) = 当期总成交额 / 当期总成交量
     # 注意：防止除以 0 的情况出现
     df['VWAP_Custom'] = np.where(df['Volume'] > 0, df['Turnover_Value'] / df['Volume'], df['Close'])
 

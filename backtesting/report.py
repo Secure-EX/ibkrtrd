@@ -15,6 +15,9 @@ from __future__ import annotations
 import sys
 import json
 import pandas as pd
+import matplotlib
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Any
@@ -146,10 +149,7 @@ def _plot_backtest(
     out_dir: Path,
 ):
     """生成回测可视化图表（3个子图）。"""
-    import matplotlib
     matplotlib.use('Agg')  # 非交互模式
-    import matplotlib.pyplot as plt
-    import matplotlib.dates as mdates
 
     fig, axes = plt.subplots(3, 1, figsize=(14, 12),
                               gridspec_kw={'height_ratios': [3, 1.5, 1]})

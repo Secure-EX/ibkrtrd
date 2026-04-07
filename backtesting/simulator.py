@@ -33,7 +33,7 @@ sys.path.insert(0, str(_BASE))
 
 from backtesting.config_bt import BacktestConfig
 from backtesting.signal_engine import SignalEngine, SignalSnapshot
-from backtesting.strategy import BaseStrategy, Action, TranchInfo
+from backtesting.strategy import BaseStrategy, Action, TranchInfo, TradeSignal
 
 
 @dataclass
@@ -45,6 +45,9 @@ class Position:
     entry_price: float
     shares: int
     cost_basis: float           # 含佣金总成本（HKD）
+    peak_price: float = 0.0     # 入场后最高价（用于移动止损）
+    entry_atr: float = 0.0      # 入场时的 ATR（用于止损计算）
+    stock_type: str = "growth"   # "blue_chip" | "growth" | "high_volatility"
 
     def market_value(self, price: float) -> float:
         return self.shares * price
@@ -76,6 +79,77 @@ class Trade:
     short_term_risk: Optional[float] = None
 
 
+class DynamicStopLoss:
+    """
+    混合动态止损管理器：ATR 移动止损 + 基本面质量调整。
+
+    止损宽度 = base_multiplier × fundamental_adj × current_ATR
+    - base_multiplier 按股票类型区分（蓝筹宽、高波动紧）
+    - fundamental_adj 按盈利增速调整（盈利增长>20% 放宽，下降 收紧）
+    - 止损线只上移不下移（trailing stop）
+    - 绝对底线：入场价 × (1 + stop_absolute_floor) 防黑天鹅
+    """
+
+    # 基础 ATR 倍数（按股票类型）
+    BASE_MULTIPLIERS = {
+        "blue_chip": 3.0,
+        "growth": 2.5,
+        "high_volatility": 2.0,
+    }
+
+    # 股票类型分类
+    STOCK_TYPES = {
+        "0700.HK": "blue_chip",       # 腾讯：互联网巨头，准公用事业
+        "0883.HK": "blue_chip",       # 中海油：央企蓝筹高分红
+        "0881.HK": "blue_chip",       # 中升集团：行业龙头
+        "9992.HK": "high_volatility", # 泡泡玛特：高弹性消费
+        "2015.HK": "high_volatility", # 理想汽车：新能源高波动
+        "2367.HK": "growth",          # 巨子生物：成长型
+        "2400.HK": "growth",          # 心动公司：成长型
+    }
+
+    # 盈利增速调整因子
+    FUNDAMENTAL_ADJ = {
+        "strong": 1.2,   # 盈利增长 > 20%：放宽止损
+        "normal": 1.0,   # 0~20%：保持不变
+        "weak": 0.8,     # 盈利下降：收紧止损
+    }
+
+    def __init__(self, cfg: 'BacktestConfig'):
+        self.base_mult = cfg.stop_atr_multiplier
+        self.absolute_floor = cfg.stop_absolute_floor  # e.g., -0.40
+
+    @classmethod
+    def get_stock_type(cls, ticker: str, override: str = None) -> str:
+        if override and override != "growth":
+            return override
+        return cls.STOCK_TYPES.get(ticker, "growth")
+
+    def compute_stop(self, pos: Position, current_atr: float,
+                     fundamental_quality: str = "normal") -> float:
+        """
+        计算某一批次的动态止损价位。
+
+        参数:
+            pos: 持仓批次
+            current_atr: 当日 ATR
+            fundamental_quality: "strong" | "normal" | "weak"
+
+        返回: 止损触发价格
+        """
+        base = self.BASE_MULTIPLIERS.get(pos.stock_type, 2.5)
+        fund_adj = self.FUNDAMENTAL_ADJ.get(fundamental_quality, 1.0)
+        multiplier = base * fund_adj
+
+        # 移动止损：从最高价回撤 multiplier × ATR
+        trailing_stop = pos.peak_price - (multiplier * current_atr)
+
+        # 绝对底线：入场价的 floor
+        absolute_stop = pos.entry_price * (1.0 + self.absolute_floor)
+
+        return max(trailing_stop, absolute_stop)
+
+
 class Simulator:
     """
     Walk-forward 回测模拟器（单标的，支持分批建仓）。
@@ -99,6 +173,13 @@ class Simulator:
         self.strategy = strategy
         self.df = df_ohlcv
         self.board_lot = board_lot
+
+        # 动态止损管理器
+        self.stop_manager = DynamicStopLoss(config) if config.use_dynamic_stop else None
+
+        # 金字塔仓位权重（在首次买入时根据当前价格自动计算）
+        self._pyramid_weights: Optional[List[float]] = None
+        self._effective_max_tranches: Optional[int] = None
 
         # 账户状态
         self.cash: float = config.initial_capital
@@ -132,9 +213,35 @@ class Simulator:
             # 计算信号
             signal = self.engine.compute_at(date)
 
-            # ---- 策略评估循环（处理多批次止损 + 加仓/清仓）----
+            # ---- 动态止损检查（在策略评估之前执行）----
+            if self.stop_manager and self.positions:
+                current_atr = self._get_current_atr(date)
+                for pos in list(self.positions):
+                    pos.peak_price = max(pos.peak_price, close)
+                    if current_atr > 0:
+                        stop_price = self.stop_manager.compute_stop(
+                            pos, current_atr, "normal"
+                        )
+                        if close <= stop_price:
+                            reason = (f"动态止损: 价格{close:.2f} <= "
+                                      f"止损线{stop_price:.2f} "
+                                      f"(peak={pos.peak_price:.2f}, "
+                                      f"{pos.stock_type}, "
+                                      f"ATR={current_atr:.2f})")
+                            ts = TradeSignal(
+                                Action.SELL_TRANCHE,
+                                tranche_id=pos.tranche_id,
+                                reason=reason)
+                            self._execute_sell_tranche(date, close, pos, ts, signal)
+            elif not self.stop_manager:
+                # 固定止损模式：更新 peak_price 供未来参考
+                for pos in self.positions:
+                    pos.peak_price = max(pos.peak_price, close)
+
+            # ---- 策略评估循环（处理加仓/清仓）----
             bought_today = False
-            for _iter in range(self.cfg.max_tranches + 5):   # 防止无限循环
+            max_t = self._effective_max_tranches or self.cfg.max_tranches
+            for _iter in range(max_t + 5):   # 防止无限循环
                 tranches = [
                     TranchInfo(
                         tranche_id=p.tranche_id,
@@ -145,7 +252,7 @@ class Simulator:
                     for p in self.positions
                 ]
                 trade_signal = self.strategy.evaluate(
-                    signal, tranches, self.cfg.max_tranches
+                    signal, tranches, max_t
                 )
 
                 if trade_signal.action == Action.HOLD:
@@ -215,6 +322,8 @@ class Simulator:
             total_cost = trade_value + commission
 
         self.cash -= total_cost
+        current_atr = self._get_current_atr(date)
+        stock_type = DynamicStopLoss.get_stock_type(self.cfg.ticker, self.cfg.stock_type)
         self.positions.append(Position(
             tranche_id=tranche_id,
             ticker=self.cfg.ticker,
@@ -222,6 +331,9 @@ class Simulator:
             entry_price=price,
             shares=shares,
             cost_basis=total_cost,
+            peak_price=price,
+            entry_atr=current_atr,
+            stock_type=stock_type,
         ))
         self._next_tranche_id += 1
 
@@ -276,18 +388,67 @@ class Simulator:
 
     def _calc_shares(self, price: float, size_hint: float = 1.0) -> int:
         """
-        每批仓位大小 = initial_capital * fixed_fraction / max_tranches。
-        使用初始资金（而非当前现金）作为基准，保持每批仓位大小一致。
+        根据仓位模式计算本批买入股数。
+
+        equal 模式：每批 = initial_capital * fixed_fraction / max_tranches
+        pyramid 模式：首批最小，逐批递增，权重自动根据每手金额适配
         """
         cfg = self.cfg
-        if cfg.position_sizing == "fixed_fraction":
-            per_tranche = cfg.initial_capital * cfg.fixed_fraction / cfg.max_tranches
-        else:  # all_in
-            per_tranche = cfg.initial_capital * cfg.max_position_pct / cfg.max_tranches
+        total_alloc = (cfg.initial_capital * cfg.fixed_fraction
+                       if cfg.position_sizing == "fixed_fraction"
+                       else cfg.initial_capital * cfg.max_position_pct)
+
+        if cfg.position_sizing_mode == "pyramid":
+            # 首次买入时自动计算金字塔权重和有效批次数
+            if self._pyramid_weights is None:
+                self._pyramid_weights, self._effective_max_tranches = (
+                    self._auto_pyramid_weights(total_alloc, price)
+                )
+                print(f"  [Simulator] 金字塔模式: {self._effective_max_tranches} 批, "
+                      f"权重 {[f'{w:.0%}' for w in self._pyramid_weights]}")
+
+            tranche_idx = len(self.positions)  # 当前是第几批（0-based）
+            weights = self._pyramid_weights
+            if tranche_idx < len(weights):
+                per_tranche = total_alloc * weights[tranche_idx]
+            else:
+                per_tranche = total_alloc / (self._effective_max_tranches or cfg.max_tranches)
+        else:
+            max_t = self._effective_max_tranches or cfg.max_tranches
+            per_tranche = total_alloc / max_t
 
         target_value = per_tranche * size_hint
         shares = int(target_value / price / self.board_lot) * self.board_lot
         return max(shares, 0)
+
+    def _auto_pyramid_weights(self, total_alloc: float, price: float) -> tuple:
+        """
+        根据每手金额自动计算金字塔权重和有效批次数。
+
+        规则：
+            可买 >= 10 手: 4 批 [10%, 20%, 30%, 40%]
+            可买 >= 5 手:  3 批 [20%, 30%, 50%]
+            可买 >= 3 手:  2 批 [40%, 60%]
+            可买 < 3 手:   1 批 [100%]
+
+        如果用户指定了 pyramid_weights 则直接使用。
+        """
+        cfg = self.cfg
+        if cfg.pyramid_weights:
+            w = cfg.pyramid_weights
+            return w, len(w)
+
+        cost_per_lot = self.board_lot * price
+        max_lots = int(total_alloc / cost_per_lot) if cost_per_lot > 0 else 0
+
+        if max_lots >= 10:
+            return [0.10, 0.20, 0.30, 0.40], 4
+        elif max_lots >= 5:
+            return [0.20, 0.30, 0.50], 3
+        elif max_lots >= 3:
+            return [0.40, 0.60], 2
+        else:
+            return [1.0], 1
 
     def _calc_commission(self, trade_value: float) -> float:
         """计算交易成本：佣金 + 印花税，最低保证金。"""
@@ -310,6 +471,20 @@ class Simulator:
         if self.equity_records:
             return self.equity_records[-1].get("equity", self.cash)
         return self.cash
+
+    def _get_current_atr(self, date: pd.Timestamp) -> float:
+        """从预计算的信号引擎数据中获取当日 ATR。"""
+        df = self.engine._df
+        if date not in df.index:
+            return 0.0
+        row = df.loc[date]
+        # pandas_ta ATR 列名可能是 ATRr_14 或 ATR_14
+        for col in ['ATRr_14', 'ATR_14']:
+            if col in df.columns:
+                val = row.get(col)
+                if val is not None and not (isinstance(val, float) and np.isnan(val)):
+                    return float(val)
+        return 0.0
 
     # ------------------------------------------------------------------
     # 决策日序列生成
@@ -335,11 +510,11 @@ class Simulator:
         if len(trading_days) == 0:
             raise ValueError(f"在 {cfg.start_date} ~ {cfg.end_date} 范围内无交易数据")
 
-        # 热身期：跳过前 warmup_days 个交易日
+        # 热身期：跳过 start_date 后的前 warmup_days 个交易日
         warmup_cutoff = (
-            all_trading_days[cfg.warmup_days - 1]
-            if len(all_trading_days) > cfg.warmup_days
-            else all_trading_days[0]
+            trading_days[cfg.warmup_days - 1]
+            if len(trading_days) > cfg.warmup_days
+            else trading_days[0]
         )
         trading_days = trading_days[trading_days >= warmup_cutoff]
 
