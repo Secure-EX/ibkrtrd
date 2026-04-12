@@ -144,7 +144,8 @@ def generate_consolidated_api_prompt() -> str:
         "global_portfolio_context": global_context,
         "stocks_analysis_queue": stock_analysis_queue,
         "analysis_requirements": [
-            "请严格遵循以下框架使用“马斯克的第一性原理 Elon Musk's First Principles”进行输出，每一个分析内容都需要分成专业角度和狗都能看懂的角度进行输出，生成Markdown文档：",
+            "请严格遵循以下框架使用“马斯克的第一性原理 Elon Musk's First Principles”进行输出，每一个分析内容都需要分成专业角度和狗都能看懂的角度进行输出，输出Markdown文件：",
+            "0. 所有HKD金额必须显式标注 HKD，所有CAD金额必须显式标注 CAD。任何跨币种比较必须先写出换算公式（含使用的汇率），再给结果。禁止口算、禁止省略单位、禁止混用。",
             "1. 资产核心状态速览: 评估全局账户安全度，及各个标的的仓位健康度，并制作表格。",
             "2. 每只股票的基本面与估值穿透: 对每个独立指标进行专业和狗都能看懂的角度进行解析，并制作表格。",
             "3. 每只股票的技术面与多周期共振: 结合日/周/月线判断支撑阻力与当前动能，对每个独立指标进行专业和狗都能看懂的角度进行解析，并制作表格。",
@@ -178,7 +179,7 @@ def generate_consolidated_api_prompt() -> str:
         f.write("请阅读以下账户持仓数据：\n```json\n")
         f.write(json.dumps(portfolio_slice, ensure_ascii=False, separators=(',', ':')))
         f.write("\n```\n[重要指令]\n")
-        f.write("请根据提供的持仓数据，使用Markdown文档格式，生成的账户持仓摘要，一张完整的持仓情况总览表格（包含：代码、公司、持仓量、均价、现价、市值、浮动盈亏金额、浮动盈亏比例、仓位占比、状态等关键字段），账户关键风险警示表格。\n")
+        f.write("请根据提供的持仓数据，生成的账户持仓摘要，一张完整的持仓情况总览表格（包含：代码、公司、持仓量、均价、现价、市值、浮动盈亏金额、浮动盈亏比例、仓位占比、状态等关键字段），账户关键风险警示表格。输出Markdown文件。\n")
         f.write("生成完毕后请回复：'持仓表格已生成，准备接收全局设定与个股数据。'")
 
     # --- 第 1 口：全局设定与任务（纯上下文参考，不触发分析）---
