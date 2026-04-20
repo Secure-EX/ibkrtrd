@@ -219,6 +219,25 @@ def fetch_index_ohlcv(index_symbol: str, years: int = LOOKBACK_YEARS):
         return False
 
 # ==========================================
+# Function 4: 拉取美国国债收益率 (格雷厄姆进阶公式所需的利率因子)
+# ==========================================
+def fetch_treasury_yield() -> float:
+    """
+    获取美国10年期国债收益率 (^TNX) 作为格雷厄姆公式中 Y 的代理。
+    返回百分比数字 (如 4.5 代表 4.5%)。失败时返回 None。
+    """
+    try:
+        tnx = yf.Ticker("^TNX")
+        hist = tnx.history(period="5d")
+        if hist.empty:
+            print("  ⚠️ 获取国债收益率失败: ^TNX 返回空数据。")
+            return None
+        return float(hist['Close'].iloc[-1])
+    except Exception as e:
+        print(f"  ⚠️ 获取国债收益率失败: {e}")
+        return None
+
+# ==========================================
 # 本地单例测试模块
 # ==========================================
 if __name__ == "__main__":

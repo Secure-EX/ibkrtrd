@@ -155,8 +155,8 @@ def main():
         print("\n" + "="*54)
         print("🎉 全量化流水线执行完毕！")
         print("📁 Prompt 文本: data/output/latest/web_prompts_YYYYMMDD/")
-        print("📂 中间分析文件: .../web_prompts_YYYYMMDD/stages/")
-        print("👉 最终报告: data/output/final_reports/CLAUDE_staged_YYYYMMDD.md")
+        # print("📂 中间分析文件: .../web_prompts_YYYYMMDD/stages/")
+        # print("👉 最终报告: data/output/final_reports/CLAUDE_staged_YYYYMMDD.md")
         print("="*54 + "\n")
 
     finally:

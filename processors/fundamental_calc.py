@@ -9,6 +9,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
 from config import FINANCIALS_DIR, FINANCIAL_REPORT_YEARS, FINANCIAL_REPORT_QTERS
+from data_pull.yfinance_api import fetch_treasury_yield
 
 def _get_quarter_string(date_str):
     """将日期转换为财报季度字符串，例如 '2025-Q3'"""
@@ -77,14 +78,19 @@ def _calc_conservative_dcf_proxy(eps_ttm, bvps):
     intrinsic_value = (22.5 * eps_ttm * bvps) ** 0.5
     return intrinsic_value
 
-def _calc_graham_growth_value(eps_ttm, growth_rate_decimal):
+def _calc_graham_growth_value(eps_ttm, growth_rate_decimal, bond_yield=None):
     """
-    格雷厄姆成长修正估值 (Graham Growth Formula)
-    公式: V = EPS × (8.5 + 2g)
-    其中 g 为预期年化增长率的百分比数字 (如 15 代表 15%)
+    格雷厄姆成长修正估值 (Graham Growth Formula) — 进阶版
+    基础公式: V = EPS × (8.5 + 2g)
+    进阶公式: V = EPS × (8.5 + 2g) × (4.4 / Y)
 
     8.5 = 格雷厄姆认为零增长公司的合理 PE
     2g  = 每 1% 的增长率值 2 倍 PE 的溢价
+    4.4 = 格雷厄姆时代 AAA 级公司债平均收益率 (%)
+    Y   = 当前债券收益率 (百分比数字，如 4.5 代表 4.5%)
+
+    利率修正的意义：利率越高，股票的机会成本越高，合理估值越低，反之亦然。
+    当 bond_yield 不可用时，退化为基础版公式。
 
     注意：此公式对 g > 25 的超高增长公司会过于乐观，封顶 25 防止失真。
     """
@@ -100,6 +106,11 @@ def _calc_graham_growth_value(eps_ttm, growth_rate_decimal):
     g = min(g, 25)
 
     intrinsic_value = eps_ttm * (8.5 + 2 * g)
+
+    # 进阶版：加入利率环境修正因子
+    if bond_yield and bond_yield > 0:
+        intrinsic_value *= (4.4 / bond_yield)
+
     return intrinsic_value
 
 def _calc_price_to_dream(ps_ratio, revenue_growth_decimal):
@@ -482,10 +493,13 @@ def generate_fundamental_analysis(ticker_symbol: str) -> dict:
         ps_ratio = info_data.get('priceToSalesTrailing12Months')
         rev_growth = info_data.get('revenueGrowth')
 
+        # 获取当前国债收益率，用于格雷厄姆进阶公式的利率修正
+        bond_yield = fetch_treasury_yield()
+
         # 计算三大高阶指标
         adjusted_pr = _calc_adjusted_pr(pe_ttm, roe_decimal, payout_ratio)
         intrinsic_val = _calc_conservative_dcf_proxy(eps, bvps)
-        graham_growth_val = _calc_graham_growth_value(eps, info_data.get('earningsGrowth'))
+        graham_growth_val = _calc_graham_growth_value(eps, info_data.get('earningsGrowth'), bond_yield)
         price_to_dream = _calc_price_to_dream(ps_ratio, rev_growth if rev_growth else None)
 
         # 提取股息与分红数据 (如果前瞻股息没有，就用过去 12 个月的滚动股息)
