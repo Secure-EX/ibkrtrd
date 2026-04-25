@@ -17,6 +17,7 @@ from config import LOOKBACK_YEARS, INDEX_SYMBOLS
 # [2] 数据处理和分析层 (Transform & Calculate)
 from processors.risk_calc import generate_portfolio_risk_report
 from processors.json_assembler import assemble_llm_payload
+from processors.transaction_parser import clean_ibkr_transactions
 
 # [3] 报告与 Prompt 生成层 (Load & Output)
 from llm_report.prompt_template import generate_consolidated_api_prompt
@@ -38,7 +39,16 @@ def main():
         time.sleep(1)
 
     # ---------------------------------------------------------
-    # 第一阶段：账户与风控全局扫描
+    # 第一阶段：清洗 IBKR 历史交易记录 (Flex Query CSV -> 标准化)
+    # ---------------------------------------------------------
+    print("\n🧹 [第一阶段] 清洗 IBKR 历史交易记录...\n")
+    try:
+        clean_ibkr_transactions()
+    except Exception as e:
+        print(f"   ⚠️ 交易记录清洗失败，将跳过此步骤: {e}")
+
+    # ---------------------------------------------------------
+    # 第二阶段：账户与风控全局扫描
     # ---------------------------------------------------------
     ib = None  # 预声明，确保 finally 能安全访问
     try:
@@ -60,7 +70,7 @@ def main():
             print(f"\n❌ 风控计算发生错误: {e}")
 
         # ---------------------------------------------------------
-        # 第二阶段：持仓标的逐个击破 (自动批处理)
+        # 第三阶段：持仓标的逐个击破 (自动批处理)
         # ---------------------------------------------------------
         print("\n🎯 账户扫描完毕，开始批量生成单股深度分析报告...\n")
 
@@ -127,18 +137,18 @@ def main():
                 continue
 
         # ---------------------------------------------------------
-        # 第三阶段：终极聚合 (Consolidate into API Prompt)
+        # 第四阶段：终极聚合 (Consolidate into API Prompt)
         # ---------------------------------------------------------
-        print("\n【第三阶段】合成终极 API Prompt...")
+        print("\n【第四阶段】合成终极 API Prompt...")
         try:
             generate_consolidated_api_prompt()
         except Exception as e:
             print(f"❌ 终极聚合失败: {e}")
 
         # ---------------------------------------------------------
-        # 第四阶段：LLM 多阶段报告自动生成
+        # 第五阶段：LLM 多阶段报告自动生成
         # ---------------------------------------------------------
-        # print("\n【第四阶段】调用 Claude CLI 多阶段自动生成分析报告...")
+        # print("\n【第五阶段】调用 Claude CLI 多阶段自动生成分析报告...")
         # try:
         #     from llm_report.report_generator import generate_staged_report
         #     generate_staged_report()
