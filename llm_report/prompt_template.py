@@ -50,20 +50,42 @@ def generate_consolidated_api_prompt() -> str:
             global_context["portfolio_risk_report"] = json.load(f)
 
     # 读全局持仓表 (一次性喂给大模型所有的持仓成本和比例，个股里就不用再传了)
+    # 同时构建"当前持仓 ticker 白名单"，用于过滤已卖出股票的陈旧 payload
+    held_tickers: set[str] = set()
     positions_file = _get_latest_file(PORTFOLIO_DIR, "current_positions_")
     if positions_file:
         df_pos = pd.read_csv(positions_file)
         # 用我们刚写的过滤器清洗一下浮点数，直接转字典
         global_context["current_all_positions"] = sanitize_for_web(df_pos.to_dict(orient='records'))
 
+        # 把 IBKR 原生 symbol 转成标准 ticker (如 "700"+HKD → "0700.HK")，与 payload 文件名对齐
+        for row in df_pos.to_dict(orient='records'):
+            raw_symbol = str(row['Symbol'])
+            currency = row.get('Currency', '')
+            if currency == 'HKD':
+                held_tickers.add(raw_symbol.zfill(4) + ".HK")
+            else:
+                held_tickers.add(raw_symbol)
+
     # ==========================================
     # 2. 聚合并挂载所有个股切片 (Stock Queue)
     # ==========================================
+    # 只装配当前持仓的 payload；已卖出股票的旧 payload 保留在 LATEST_DIR 里作为历史归档，
+    # 但不再进入新的 web prompt。如果没有任何持仓数据可参考(held_tickers 为空)，退化为原有的全量扫描。
     stock_analysis_queue = []
+    skipped_tickers = []
 
     # 扫描所有生成的 Payload JSON
     payload_files = glob.glob(str(LATEST_DIR / "*_LLM_Payload.json"))
     for file_path in payload_files:
+        # 从文件名提取 ticker (如 "0700.HK_LLM_Payload.json" → "0700.HK")
+        filename = Path(file_path).name
+        ticker_from_file = filename.replace("_LLM_Payload.json", "")
+
+        if held_tickers and ticker_from_file not in held_tickers:
+            skipped_tickers.append(ticker_from_file)
+            continue
+
         with open(file_path, 'r', encoding='utf-8') as f:
             stock_data = json.load(f)
 
@@ -76,6 +98,9 @@ def generate_consolidated_api_prompt() -> str:
                 "user_subjective_note": note,
                 "quantitative_payload": stock_data
             })
+
+    if skipped_tickers:
+        print(f"   ⏭️  已跳过 {len(skipped_tickers)} 只非持仓股票的陈旧 payload: {', '.join(sorted(skipped_tickers))}")
 
     # ==========================================
     # 3. 终极 API Prompt 结构 (System + Context + Data + Task)
