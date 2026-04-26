@@ -10,11 +10,11 @@ context small and focused, letting extended-thinking models reason deeply
 on a single task rather than scanning a giant undifferentiated context.
 
 Pipeline (generate_staged_report):
-  Stage 0  Haiku               — portfolio status table (00_*.txt)
-  Stage 1  Sonnet + effort high — global framework ack (stage0 + 01_*.txt)
-  Stage 2  Opus  + effort max   — per-stock deep analysis (one fresh session per stock)
-  Stage 3  Opus  + effort max   — final action plan (stage1_compact + stage2 compacts + 03_*.txt)
-  Stage 4  Python only          — local assembly → CLAUDE_staged_YYYYMMDD.md
+  Stage 0  Haiku                  — portfolio status table (00_*.txt)
+  Stage 1  Opus 4.7 + 1M context  — per-stock deep analysis (fresh session per stock,
+                                    self-contained 01_*.txt with full framework)
+  Stage 2  Opus 4.7 + effort max  — final action plan (stage1 compacts + 02_*.txt)
+  Stage 3  Python only            — local assembly → CLAUDE_staged_YYYYMMDD.md
 
 Intermediate files are written to web_prompts_YYYYMMDD/stages/ for inspection.
 
@@ -35,6 +35,7 @@ Usage:
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -54,22 +55,25 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-_MODEL_POSITION   = "claude-haiku-4-5-20251001"  # turn 0: portfolio table summary
-_MODEL_STOCK      = "claude-sonnet-4-6"          # turns 1-N: global context + per-stock
-_MODEL_FINAL      = "claude-opus-4-6"            # final turn only: decision & action plan
+_MODEL_POSITION   = "claude-haiku-4-5-20251001"  # Stage 0: portfolio table summary
+_MODEL_PERSTOCK   = "claude-opus-4-7"            # Stage 1: per-stock deep analysis (latest Opus, 1M context)
+_MODEL_FINAL      = "claude-opus-4-7"            # Stage 2: decision & action plan
 _TIMEOUT_STOCK    = 600   # seconds — deep analysis per stock (~5 min)
 _TIMEOUT_FINAL    = 600   # seconds — consolidated action plan
 _INTER_TURN_SLEEP = 2     # seconds between turns
+
+# 1M context beta header for Opus 4.7 — Stage 2 per-stock payload now embeds full
+# metric_definitions + global_portfolio_context + stock data, easily exceeding 200K.
+# The CLI honors ANTHROPIC_BETAS env var; we set it on each Stage 2 invocation.
+_BETA_1M_CONTEXT  = "context-1m-2025-08-07"
 
 # ---------------------------------------------------------------------------
 # Staged-mode constants
 # ---------------------------------------------------------------------------
 _MODEL_COMPACT    = "claude-haiku-4-5-20251001"  # compact summarizer (all stages)
-_EFFORT_STAGE1    = "high"   # Sonnet: global context acknowledgment
 _EFFORT_STAGE2    = "max"    # Opus: per-stock deep analysis
 _EFFORT_STAGE3    = "max"    # Opus: final action plan
 _TIMEOUT_STAGE0   = 180      # Haiku portfolio table
-_TIMEOUT_STAGE1   = 360      # Sonnet global context ack
 _TIMEOUT_STAGE2   = 900      # Opus per-stock (effort max — allow up to 15 min)
 _TIMEOUT_STAGE3   = 900      # Opus final plan (effort max)
 _TIMEOUT_COMPACT  = 180      # Haiku compact summarization
@@ -93,14 +97,21 @@ def _check_claude_cli() -> str:
 
 def _send_message(
     prompt_text: str,
-    model: str = _MODEL_STOCK,
+    model: str = _MODEL_PERSTOCK,
     session_id: str | None = None,
     timeout: int = 300,
     cli_path: str = "claude",
     effort: str | None = None,
+    betas: list[str] | None = None,
 ) -> tuple[str, str]:
     """
     Send one message to the Claude CLI in non-interactive print mode.
+
+    Parameters
+    ----------
+    betas : list[str] | None
+        Optional list of Anthropic beta flags (e.g. ["context-1m-2025-08-07"]).
+        Passed to the subprocess via ANTHROPIC_BETAS env var (comma-separated).
 
     Returns
     -------
@@ -123,6 +134,12 @@ def _send_message(
     if session_id:
         cmd += ["--resume", session_id]
 
+    env = os.environ.copy()
+    if betas:
+        existing = env.get("ANTHROPIC_BETAS", "").strip()
+        merged = ",".join([b for b in [existing, *betas] if b])
+        env["ANTHROPIC_BETAS"] = merged
+
     result = subprocess.run(
         cmd,
         input=prompt_text,
@@ -130,6 +147,7 @@ def _send_message(
         text=True,
         encoding="utf-8",
         timeout=timeout,
+        env=env,
     )
 
     if result.returncode != 0:
@@ -182,17 +200,6 @@ def _compress_to_compact(
         return f"[Compact generation failed: {exc}]\n\n{full_text[:2000]}"
 
 
-def _compact_prompt_stage1() -> str:
-    return (
-        "以下是分析框架确认回复。请将其压缩为精简版框架摘要，包含：\n"
-        "①用户投资档案（2-3行）\n"
-        "②本次分析的持仓列表（股票代码+公司名）\n"
-        "③核心分析框架要点（5点以内）\n"
-        "④关键风险指标阈值摘要（3-5行）\n"
-        "总长度不超过500字，保留所有数字和股票代码。"
-    )
-
-
 def _compact_prompt_stage2(ticker: str) -> str:
     return (
         f"以下是{ticker}的完整分析报告。请提炼为compact摘要，包含：\n"
@@ -216,7 +223,7 @@ def _assemble_report(
         f"- **生成时间**: {now}",
         f"- **数据来源**: `{source_dir.name}`",
         f"- **持仓表格模型**: `{_MODEL_POSITION}`",
-        f"- **个股分析模型**: `{_MODEL_STOCK}`",
+        f"- **个股分析模型**: `{_MODEL_PERSTOCK}` (1M context)",
         f"- **决策模型**: `{_MODEL_FINAL}`",
     ]
     if errors:
@@ -244,9 +251,8 @@ def _assemble_staged_report(
         f"- **生成时间**: {now}",
         f"- **数据来源**: `{web_prompts_dir.name}`",
         f"- **Stage 0**: `{_MODEL_POSITION}` — 持仓情况表格",
-        f"- **Stage 1**: `claude-sonnet-4-6` (effort: {_EFFORT_STAGE1}) — 全局框架确认",
-        f"- **Stage 2**: `{_MODEL_FINAL}` (effort: {_EFFORT_STAGE2}) — 个股深度分析",
-        f"- **Stage 3**: `{_MODEL_FINAL}` (effort: {_EFFORT_STAGE3}) — 终极决断与操作计划",
+        f"- **Stage 1**: `{_MODEL_PERSTOCK}` (effort: {_EFFORT_STAGE2}, 1M context) — 个股深度分析",
+        f"- **Stage 2**: `{_MODEL_FINAL}` (effort: {_EFFORT_STAGE3}) — 终极决断与操作计划",
     ]
     if errors:
         lines += ["\n> ⚠️ **生成过程中存在以下错误，相关章节需手动补充:**"]
@@ -264,16 +270,16 @@ def _assemble_staged_report(
     if tickers_json.exists():
         tickers_map = json.loads(tickers_json.read_text(encoding="utf-8"))
 
-    # Stage 2: per-stock full analyses
-    for full_md in sorted(stage_dir.glob("stage2_*_full.md")):
-        safe_ticker = full_md.stem.replace("stage2_", "").replace("_full", "")
+    # Stage 1: per-stock full analyses
+    for full_md in sorted(stage_dir.glob("stage1_*_full.md")):
+        safe_ticker = full_md.stem.replace("stage1_", "").replace("_full", "")
         ticker = tickers_map.get(safe_ticker, safe_ticker)
         lines += [f"## 个股深度分析: {ticker}\n", full_md.read_text(encoding="utf-8"), "\n---\n"]
 
-    # Stage 3: final action plan
-    stage3 = stage_dir / "stage3_final_plan.md"
-    if stage3.exists():
-        lines += ["## 最终操作计划 (Final Action Plan)\n", stage3.read_text(encoding="utf-8"), "\n---\n"]
+    # Stage 2: final action plan
+    stage2 = stage_dir / "stage2_final_plan.md"
+    if stage2.exists():
+        lines += ["## 最终操作计划 (Final Action Plan)\n", stage2.read_text(encoding="utf-8"), "\n---\n"]
 
     return "\n".join(lines)
 
@@ -316,13 +322,12 @@ def generate_report(web_prompts_dir: Path | None = None) -> Path | None:
 
     all_files     = sorted(web_prompts_dir.glob("*.txt"))
     position_file = next((f for f in all_files if f.name.startswith("00_")), None)
-    global_file   = next((f for f in all_files if f.name.startswith("01_")), None)
-    stock_files   = sorted(f for f in all_files if f.name.startswith("02_"))
-    final_file    = next((f for f in all_files if f.name.startswith("03_")), None)
+    stock_files   = sorted(f for f in all_files if f.name.startswith("01_"))
+    final_file    = next((f for f in all_files if f.name.startswith("02_")), None)
 
-    if not global_file or not final_file:
+    if not stock_files or not final_file:
         raise FileNotFoundError(
-            f"Expected 01_*.txt and 03_*.txt in {web_prompts_dir}.\n"
+            f"Expected 01_*.txt (per-stock) and 02_*.txt (final) in {web_prompts_dir}.\n"
             f"Found: {[f.name for f in all_files]}"
         )
 
@@ -367,32 +372,28 @@ def generate_report(web_prompts_dir: Path | None = None) -> Path | None:
         time.sleep(_INTER_TURN_SLEEP)
 
     # -------------------------------------------------------------------
-    # Per-stock deep analysis (Sonnet) — each stock uses a FRESH session
-    # Global context is prepended to every stock prompt to avoid cumulative
-    # context buildup that would cause token limit errors on later stocks.
+    # Per-stock deep analysis (Opus) — each stock uses a FRESH session.
+    # Per-stock files are self-contained (instructions + metric_definitions +
+    # global_portfolio_context + target_stock + analysis_requirements), so no
+    # external context prefix is needed.
     # -------------------------------------------------------------------
-    global_text = global_file.read_text(encoding="utf-8")
     stock_analyses: list[tuple[str, str]] = []   # (ticker, analysis_text)
 
     for i, stock_file in enumerate(stock_files, start=1 + turn_offset):
-        # Filename pattern: 02_01_个股数据_0700.HK.txt
+        # Filename pattern: 01_01_个股数据_0700.HK.txt
         # Extract ticker from the last underscore-delimited segment of the stem
         stem_parts = stock_file.stem.split("_")
         ticker = stem_parts[-1] if len(stem_parts) >= 4 else stock_file.stem
 
-        print(f"[{i}/{total_turns}] 分析 {ticker} (Sonnet, 独立 Session)...")
-        combined_prompt = (
-            global_text
-            + "\n\n---\n\n"
-            + stock_file.read_text(encoding="utf-8")
-        )
+        print(f"[{i}/{total_turns}] 分析 {ticker} (Opus, 独立 Session)...")
         try:
             text, _ = _send_message(
-                combined_prompt,
-                model=_MODEL_STOCK,
+                stock_file.read_text(encoding="utf-8"),
+                model=_MODEL_PERSTOCK,
                 session_id=None,   # fresh session per stock — no context accumulation
                 timeout=_TIMEOUT_STOCK,
                 cli_path=cli_path,
+                betas=[_BETA_1M_CONTEXT],
             )
             responses.append({"label": f"个股深度分析: {ticker}", "text": text})
             stock_analyses.append((ticker, text))
@@ -413,9 +414,10 @@ def generate_report(web_prompts_dir: Path | None = None) -> Path | None:
         time.sleep(_INTER_TURN_SLEEP)
 
     # -------------------------------------------------------------------
-    # Final turn — Consolidated action plan (Opus, fresh session)
-    # Inject global instructions + all Sonnet analyses as context so Opus
-    # gets full information without carrying the accumulated session weight.
+    # Final turn — Consolidated action plan (Opus, fresh session).
+    # Inject all per-stock analyses as context. The final file is itself
+    # self-contained (instructions + global_portfolio_context + portfolio
+    # analysis_requirements), so no external global prefix is needed.
     # -------------------------------------------------------------------
     print(f"[{total_turns}/{total_turns}] 请求最终操作计划 (Opus, 新 Session)...")
 
@@ -424,9 +426,7 @@ def generate_report(web_prompts_dir: Path | None = None) -> Path | None:
         for ticker, analysis in stock_analyses
     )
     opus_prompt = (
-        f"{global_file.read_text(encoding='utf-8')}\n\n"
-        f"---\n\n"
-        f"以下是各个股的深度分析结果（由 Sonnet 完成）：\n\n"
+        f"以下是各个股的深度分析结果（由 Opus 完成）：\n\n"
         f"{analyses_block}\n\n"
         f"---\n\n"
         f"{final_file.read_text(encoding='utf-8')}"
@@ -479,11 +479,10 @@ def generate_staged_report(web_prompts_dir: Path | None = None) -> Path | None:
     Multi-stage report generation using separate CLI chat sessions per stage.
 
     Pipeline:
-      Stage 0  Haiku          — portfolio table (00_*.txt)
-      Stage 1  Sonnet high    — global context ack (stage0_compact + 01_*.txt)
-      Stage 2  Opus max       — per-stock analysis (stage1_compact + 02_*.txt each)
-      Stage 3  Opus max       — final action plan (stage1_compact + stage2 compacts + 03_*.txt)
-      Stage 4  Python only    — local assembly → CLAUDE_staged_YYYYMMDD.md
+      Stage 0  Haiku                  — portfolio table (00_*.txt)
+      Stage 1  Opus 4.7 + 1M context  — per-stock analysis (self-contained 01_*.txt each)
+      Stage 2  Opus 4.7 + effort max  — final action plan (stage1 compacts + 02_*.txt)
+      Stage 3  Python only            — local assembly → CLAUDE_staged_YYYYMMDD.md
 
     Intermediate files are written to web_prompts_YYYYMMDD/stages/ for review.
 
@@ -503,28 +502,27 @@ def generate_staged_report(web_prompts_dir: Path | None = None) -> Path | None:
 
     all_files     = sorted(web_prompts_dir.glob("*.txt"))
     position_file = next((f for f in all_files if f.name.startswith("00_")), None)
-    global_file   = next((f for f in all_files if f.name.startswith("01_")), None)
-    stock_files   = sorted(f for f in all_files if f.name.startswith("02_"))
-    final_file    = next((f for f in all_files if f.name.startswith("03_")), None)
+    stock_files   = sorted(f for f in all_files if f.name.startswith("01_"))
+    final_file    = next((f for f in all_files if f.name.startswith("02_")), None)
 
-    if not global_file or not final_file:
+    if not stock_files or not final_file:
         raise FileNotFoundError(
-            f"Expected 01_*.txt and 03_*.txt in {web_prompts_dir}.\n"
+            f"Expected 01_*.txt (per-stock) and 02_*.txt (final) in {web_prompts_dir}.\n"
             f"Found: {[f.name for f in all_files]}"
         )
 
     stage_dir = web_prompts_dir / "stages"
     stage_dir.mkdir(exist_ok=True)
 
-    total_stages = 4
+    total_stages = 3
     errors: list[str] = []
 
     print(f"\n{'='*58}")
     print(f"  Claude 多阶段报告生成")
     print(f"  来源: {web_prompts_dir.name}")
-    print(f"  阶段: Stage0(Haiku) → Stage1(Sonnet/{_EFFORT_STAGE1}) "
-          f"→ Stage2(Opus/{_EFFORT_STAGE2} × {len(stock_files)}只) "
-          f"→ Stage3(Opus/{_EFFORT_STAGE3})")
+    print(f"  阶段: Stage0(Haiku 持仓表) "
+          f"→ Stage1(Opus/{_EFFORT_STAGE2} × {len(stock_files)} 只个股, 1M context) "
+          f"→ Stage2(Opus/{_EFFORT_STAGE3} 终极决断)")
     print(f"  中间文件: {stage_dir}")
     print(f"{'='*58}\n")
 
@@ -557,46 +555,9 @@ def generate_staged_report(web_prompts_dir: Path | None = None) -> Path | None:
     time.sleep(_INTER_TURN_SLEEP)
 
     # -----------------------------------------------------------------------
-    # Stage 1 — Global context acknowledgment (Sonnet, effort high)
-    # -----------------------------------------------------------------------
-    print(f"[Stage 1/{total_stages}] 全局框架确认 (Sonnet, effort={_EFFORT_STAGE1})...")
-    stage1_compact = ""
-    try:
-        stage0_prefix = (
-            f"# 当前持仓情况概览\n\n{stage0_text}\n\n---\n\n"
-            if stage0_text else ""
-        )
-        stage1_prompt = stage0_prefix + global_file.read_text(encoding="utf-8")
-        stage1_text, _ = _send_message(
-            stage1_prompt,
-            model=_MODEL_STOCK,
-            session_id=None,
-            timeout=_TIMEOUT_STAGE1,
-            cli_path=cli_path,
-            effort=_EFFORT_STAGE1,
-        )
-        _write_stage_file(stage_dir, "stage1_global_ack.md", stage1_text)
-        print(f"  ✓ Stage 1 主体完成 ({len(stage1_text):,} 字符)，生成 compact...")
-
-        stage1_compact = _compress_to_compact(
-            stage1_text,
-            _compact_prompt_stage1(),
-            cli_path,
-        )
-        _write_stage_file(stage_dir, "stage1_compact.md", stage1_compact)
-        print(f"  ✓ Stage 1 compact 完成 ({len(stage1_compact):,} 字符)")
-    except subprocess.TimeoutExpired:
-        errors.append(f"Stage1: timeout after {_TIMEOUT_STAGE1}s")
-        stage1_compact = global_file.read_text(encoding="utf-8")[:3000]
-        print(f"  ⚠ Stage 1 超时，使用原始指令作为 compact 继续...")
-    except RuntimeError as exc:
-        errors.append(f"Stage1: {exc}")
-        stage1_compact = global_file.read_text(encoding="utf-8")[:3000]
-        print(f"  ⚠ Stage 1 出错: {exc}，使用原始指令作为 compact 继续...")
-    time.sleep(_INTER_TURN_SLEEP)
-
-    # -----------------------------------------------------------------------
-    # Stage 2 — Per-stock deep analysis (Opus, effort max, fresh session each)
+    # Stage 1 — Per-stock deep analysis (Opus 4.7 + 1M context, effort max,
+    # fresh session each). Per-stock files are self-contained, so no global
+    # context prefix is needed.
     # -----------------------------------------------------------------------
     stock_compacts: list[tuple[str, str]] = []  # (ticker, compact_text)
 
@@ -604,24 +565,20 @@ def generate_staged_report(web_prompts_dir: Path | None = None) -> Path | None:
         stem_parts = stock_file.stem.split("_")
         ticker = stem_parts[-1] if len(stem_parts) >= 4 else stock_file.stem
 
-        print(f"[Stage 2/{total_stages}] 个股分析 [{idx}/{len(stock_files)}] {ticker} "
-              f"(Opus, effort={_EFFORT_STAGE2})...")
+        print(f"[Stage 1/{total_stages}] 个股分析 [{idx}/{len(stock_files)}] {ticker} "
+              f"(Opus 4.7, 1M ctx, effort={_EFFORT_STAGE2})...")
         try:
-            stock_prompt = (
-                f"# 分析框架摘要（已确认）\n\n{stage1_compact}\n\n"
-                f"---\n\n"
-                + stock_file.read_text(encoding="utf-8")
-            )
             stock_text, _ = _send_message(
-                stock_prompt,
-                model=_MODEL_FINAL,
+                stock_file.read_text(encoding="utf-8"),
+                model=_MODEL_PERSTOCK,
                 session_id=None,
                 timeout=_TIMEOUT_STAGE2,
                 cli_path=cli_path,
                 effort=_EFFORT_STAGE2,
+                betas=[_BETA_1M_CONTEXT],
             )
             safe_ticker = ticker.replace(".", "_")
-            _write_stage_file(stage_dir, f"stage2_{safe_ticker}_full.md", stock_text)
+            _write_stage_file(stage_dir, f"stage1_{safe_ticker}_full.md", stock_text)
             print(f"  ✓ {ticker} 分析完成 ({len(stock_text):,} 字符)，生成 compact...")
 
             compact_text = _compress_to_compact(
@@ -629,19 +586,19 @@ def generate_staged_report(web_prompts_dir: Path | None = None) -> Path | None:
                 _compact_prompt_stage2(ticker),
                 cli_path,
             )
-            _write_stage_file(stage_dir, f"stage2_{safe_ticker}_compact.md", compact_text)
+            _write_stage_file(stage_dir, f"stage1_{safe_ticker}_compact.md", compact_text)
             stock_compacts.append((ticker, compact_text))
             print(f"  ✓ {ticker} compact 完成 ({len(compact_text):,} 字符)")
             time.sleep(_INTER_TURN_SLEEP)
         except subprocess.TimeoutExpired:
             msg = f"[分析超时 ({_TIMEOUT_STAGE2}s)]"
             stock_compacts.append((ticker, msg))
-            errors.append(f"Stage2/{ticker}: timeout after {_TIMEOUT_STAGE2}s")
+            errors.append(f"Stage1/{ticker}: timeout after {_TIMEOUT_STAGE2}s")
             print(f"  ⚠ {ticker} 超时，跳过继续...")
         except RuntimeError as exc:
             msg = f"[分析失败: {exc}]"
             stock_compacts.append((ticker, msg))
-            errors.append(f"Stage2/{ticker}: {exc}")
+            errors.append(f"Stage1/{ticker}: {exc}")
             print(f"  ⚠ {ticker} 出错: {exc}，跳过继续...")
 
         time.sleep(_INTER_TURN_SLEEP)
@@ -652,47 +609,47 @@ def generate_staged_report(web_prompts_dir: Path | None = None) -> Path | None:
                       json.dumps(tickers_map, ensure_ascii=False, indent=2))
 
     # -----------------------------------------------------------------------
-    # Stage 3 — Final action plan (Opus, effort max)
+    # Stage 2 — Final action plan (Opus 4.7, effort max). Final file is
+    # self-contained (instructions + global_portfolio_context + portfolio
+    # analysis_requirements); we prepend per-stock compacts as context.
     # -----------------------------------------------------------------------
-    print(f"[Stage 3/{total_stages}] 终极决断与操作计划 (Opus, effort={_EFFORT_STAGE3})...")
+    print(f"[Stage 2/{total_stages}] 终极决断与操作计划 (Opus 4.7, effort={_EFFORT_STAGE3})...")
     compacts_block = "\n\n".join(
         f"### {ticker} 核心结论摘要\n{compact}"
         for ticker, compact in stock_compacts
     )
-    stage3_prompt = (
-        f"# 分析框架摘要（已确认）\n\n{stage1_compact}\n\n"
-        f"---\n\n"
+    stage2_prompt = (
         f"# 各个股核心结论摘要（由 Opus 深度分析后压缩）\n\n"
         f"{compacts_block}\n\n"
         f"---\n\n"
         + final_file.read_text(encoding="utf-8")
     )
     try:
-        stage3_text, _ = _send_message(
-            stage3_prompt,
+        stage2_text, _ = _send_message(
+            stage2_prompt,
             model=_MODEL_FINAL,
             session_id=None,
             timeout=_TIMEOUT_STAGE3,
             cli_path=cli_path,
             effort=_EFFORT_STAGE3,
         )
-        _write_stage_file(stage_dir, "stage3_final_plan.md", stage3_text)
-        print(f"  ✓ Stage 3 完成 ({len(stage3_text):,} 字符)")
+        _write_stage_file(stage_dir, "stage2_final_plan.md", stage2_text)
+        print(f"  ✓ Stage 2 完成 ({len(stage2_text):,} 字符)")
     except subprocess.TimeoutExpired:
-        _write_stage_file(stage_dir, "stage3_final_plan.md",
+        _write_stage_file(stage_dir, "stage2_final_plan.md",
                           f"[最终计划超时 ({_TIMEOUT_STAGE3}s) — 请手动补充]")
-        errors.append(f"Stage3: timeout after {_TIMEOUT_STAGE3}s")
-        print(f"  ⚠ Stage 3 超时")
+        errors.append(f"Stage2: timeout after {_TIMEOUT_STAGE3}s")
+        print(f"  ⚠ Stage 2 超时")
     except RuntimeError as exc:
-        _write_stage_file(stage_dir, "stage3_final_plan.md",
+        _write_stage_file(stage_dir, "stage2_final_plan.md",
                           f"[最终计划生成失败: {exc}]")
-        errors.append(f"Stage3: {exc}")
-        print(f"  ⚠ Stage 3 出错: {exc}")
+        errors.append(f"Stage2: {exc}")
+        print(f"  ⚠ Stage 2 出错: {exc}")
 
     # -----------------------------------------------------------------------
-    # Stage 4 — Local assembly (no LLM)
+    # Stage 3 — Local assembly (no LLM)
     # -----------------------------------------------------------------------
-    print(f"[Stage 4/{total_stages}] 本地组合最终报告...")
+    print(f"[Stage 3/{total_stages}] 本地组合最终报告...")
     today_str   = datetime.now().strftime("%Y%m%d")
     output_path = FINAL_REPORTS_DIR / f"CLAUDE_staged_{today_str}.md"
     report      = _assemble_staged_report(stage_dir, web_prompts_dir, errors)

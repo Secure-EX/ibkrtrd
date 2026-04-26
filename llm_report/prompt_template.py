@@ -181,6 +181,25 @@ def generate_consolidated_api_prompt() -> str:
         ]
     }
 
+    # 拆分 analysis_requirements 为 per-stock / portfolio 两组，
+    # 用于 Web 切片中"每个个股自包含 prompt"和"终极决断综合"两类文件。
+    per_stock_analysis_requirements = [
+        "请使用“马斯克的第一性原理 Elon Musk's First Principles”进行输出，每一个分析内容都需要分成专业角度和狗都能看懂的角度进行输出，输出 Markdown 文件：",
+        "0. 所有HKD金额必须显式标注 HKD，所有CAD金额必须显式标注 CAD。任何跨币种比较必须先写出换算公式（含使用的汇率，汇率可使用网络搜索到的结果），再给结果。禁止口算、禁止省略单位、禁止混用。",
+        "1. 基本面与估值穿透: 对每个独立指标进行专业和狗都能看懂的角度进行解析，并制作表格。",
+        "2. 技术面与多周期共振: 结合日/周/月线判断支撑阻力与当前动能，对每个独立指标进行专业和狗都能看懂的角度进行解析，并制作表格。",
+        "3. 情绪面分析: 基于已提供的新闻标题数据(news_sentiment 字段)，分析市场情绪倾向（利好/利空/中性），识别关键事件催化剂，并结合网络搜索补充近期重要信息。制作表格。",
+        "4. 牛熊指引: 如果一切顺利，股价能到多少？逻辑是什么？如果风险爆发，股价底线在哪里？",
+    ]
+
+    portfolio_analysis_requirements = [
+        "请基于上方提供的所有个股深度分析结论 + 账户全局上下文，使用“马斯克的第一性原理”进行综合输出，输出 Markdown 文件：",
+        "0. 所有HKD金额必须显式标注 HKD，所有CAD金额必须显式标注 CAD。任何跨币种比较必须先写出换算公式（含使用的汇率，汇率可使用网络搜索到的结果），再给结果。禁止口算、禁止省略单位、禁止混用。",
+        "1. 资产核心状态速览: 评估全局账户安全度，及各个标的的仓位健康度，并制作表格。",
+        "2. 组合最大潜在风险点: 如果股市强烈回调 20% 会发生什么。包括但不限于关税战、贸易战、热战、瘟疫等。",
+        "3. 最终决断与操作计划: 基于用户的特定备忘录和全局资金，给出明确的[加仓/减仓/持有/止损]建议（需精确到参考价位和数量比例）。",
+    ]
+
     # 落盘为统一的 JSON 文件
     output_path = LATEST_DIR / f"prompt_{today_str}.json"
     with open(output_path, 'w', encoding='utf-8') as f:
@@ -207,45 +226,48 @@ def generate_consolidated_api_prompt() -> str:
         f.write("请根据提供的持仓数据，生成的账户持仓摘要，一张完整的持仓情况总览表格（包含：代码、公司、持仓量、均价、现价、市值、浮动盈亏金额、浮动盈亏比例、仓位占比、状态等关键字段），账户关键风险警示表格。输出Markdown文件。\n")
         f.write("生成完毕后请回复：'持仓表格已生成，准备接收全局设定与个股数据。'")
 
-    # --- 第 1 口：全局设定与任务（纯上下文参考，不触发分析）---
-    global_slice = {
-        "instructions": master_prompt["instructions"],
-        "user_profile": master_prompt["user_profile"],
-        "metric_definitions": master_prompt["metric_definitions"],
-        "global_portfolio_context": master_prompt["global_portfolio_context"],
-        "analysis_requirements": master_prompt["analysis_requirements"]
-    }
-    with open(web_dir / "01_全局设定与指令.txt", 'w', encoding='utf-8') as f:
-        f.write("[System Instructions & Global Context]\n")
-        f.write("请阅读以下全局设定、账户资金状态以及最终的分析任务要求：\n```json\n")
-        f.write(json.dumps(global_slice, ensure_ascii=False, separators=(',', ':')))
-        f.write("\n```\n[重要指令]\n")
-        f.write("这是全局账户状态和分析框架。请回复：'收到，我已经清楚账户资金和风控底线。请提供个股数据，我将逐一进行极度深度的硬核拆解。'\n")
-        f.write("注意：在收到后续的个股数据前，请不要做任何分析！")
-
-    # --- 第 2 到 N 口：个股数据切片 ---
+    # --- 第 1 到 N 口：个股深度分析（每个文件自包含全部框架，新 session 即可独立运行）---
+    # 由于每只股都送进全新的 Opus session，文件必须自带 instructions / user_profile /
+    # metric_definitions / global_portfolio_context，否则模型无法解读高阶量化指标。
     total_stocks = len(stock_analysis_queue)
     for i, stock in enumerate(stock_analysis_queue):
         ticker = stock['target_ticker']
         safe_ticker = ticker.replace(":", "_")
-        with open(web_dir / f"02_{i+1:02d}_个股数据_{safe_ticker}.txt", 'w', encoding='utf-8') as f:
-            f.write(f"[Stock Data {i+1}/{total_stocks}]\n")
-            f.write(f"这是第 {i+1} 只股票的数据（{ticker}）。\n```json\n")
-            # f.write(json.dumps(stock, indent=4, ensure_ascii=False))
-            f.write(json.dumps(stock, ensure_ascii=False, separators=(',', ':')))
+        per_stock_payload = {
+            "instructions": master_prompt["instructions"],
+            "user_profile": master_prompt["user_profile"],
+            "metric_definitions": metric_definitions,
+            "global_portfolio_context": global_context,
+            "target_stock": stock,
+            "analysis_requirements": per_stock_analysis_requirements,
+        }
+        with open(web_dir / f"01_{i+1:02d}_个股数据_{safe_ticker}.txt", 'w', encoding='utf-8') as f:
+            f.write(f"[Single-Stock Deep Analysis {i+1}/{total_stocks} — {ticker}]\n")
+            f.write("以下 JSON 是本只股票深度分析所需的完整自包含上下文（角色定义、用户画像、指标说明书、组合上下文、目标个股数据、分析要求）：\n```json\n")
+            f.write(json.dumps(per_stock_payload, ensure_ascii=False, separators=(',', ':')))
             f.write("\n```\n[重要指令]\n")
-            f.write("请严格按照刚才确认的框架要求，动用全部算力，不惜字数地对这只股票进行深度剖析（包括市赚率、现金流排雷、多周期技术面共振和牛熊推演等）。\n")
+            f.write("请阅读以上完整的分析框架（角色定义、用户画像、指标定义、组合上下文）以及目标个股数据，")
+            f.write("按照 analysis_requirements 列表逐项进行不惜字数的深度剖析"
+                    "（包括市赚率、现金流排雷、多周期技术面共振和牛熊推演等）。\n")
+            f.write("每一个分析内容都需要分成专业角度和狗都能看懂的角度进行输出，输出 Markdown 文件。\n")
             f.write("写完后，请提示我发送下一只股票的数据。")
 
-    # --- 最终口：终极决断 ---
+    # --- 最终口：终极决断（自包含组合级综合任务）---
     # 注意：此文件在自动化流程(report_generator.py)中由 Opus 全新 session 接收，
-    # 届时 global_context 和所有个股分析均已作为上下文注入同一 prompt，
-    # 无需依赖多轮记忆，直接引用"以上数据"即可。
-    with open(web_dir / "03_终极决断与操作计划.txt", 'w', encoding='utf-8') as f:
+    # 届时所有个股分析的 compact 摘要已作为上下文注入同一 prompt；
+    # 在手动 web 流中，用户也会先粘贴所有个股分析结果再粘贴本文件。
+    final_payload = {
+        "instructions": master_prompt["instructions"],
+        "user_profile": master_prompt["user_profile"],
+        "global_portfolio_context": global_context,
+        "analysis_requirements": portfolio_analysis_requirements,
+    }
+    with open(web_dir / "02_终极决断与操作计划.txt", 'w', encoding='utf-8') as f:
         f.write("[Final Actionable Plan]\n")
-        f.write("以上已提供：全局账户风控状态、所有持仓明细，以及每只个股的完整深度分析结果。\n")
-        f.write("[重要指令]\n")
-        f.write("请基于以上全部数据，综合全局资金状况与各标的分析结论，")
+        f.write("以上已提供每只个股的完整深度分析结果。下方 JSON 是组合级综合任务所需的自包含上下文（角色定义、用户画像、组合上下文、综合分析要求）：\n```json\n")
+        f.write(json.dumps(final_payload, ensure_ascii=False, separators=(',', ':')))
+        f.write("\n```\n[重要指令]\n")
+        f.write("请基于以上全部个股分析结论与组合上下文，按照 analysis_requirements 逐项输出，")
         f.write("出具一份包含明确股数、参考价位和买卖逻辑的[最终操作计划表]。\n")
         f.write("要求：总动用资金绝不超过可用现金；严格遵守马斯克的第一性原理；给出明确的[加仓/减仓/持有/止损]结论，不得模糊。")
 
