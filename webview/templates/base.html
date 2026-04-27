@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}HK Stock Webview{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/layout.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/forms.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/home.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/markdown.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/chart.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/trend.css') }}" />
+  {% block head_extra %}{% endblock %}
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><a href="{{ url_for('index') }}">HK Stock Webview</a></div>
+    <nav class="topnav">
+      <a href="{{ url_for('reports') }}">报告</a>
+      <a href="{{ url_for('charts_index') }}">图表</a>
+    </nav>
+  </header>
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="footer">
+    <span>本地视图 · 仅监听 127.0.0.1</span>
+  </footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

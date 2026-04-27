@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}报告 · HK Stock Webview{% endblock %}
+{% block content %}
+<section class="card report-page">
+  <div class="report-toolbar">
+    <h1>分析报告</h1>
+    {% if files %}
+    <form method="get" action="{{ url_for('reports') }}" class="inline-form">
+      <label for="file-select">切换：</label>
+      <select id="file-select" name="file" onchange="this.form.submit()">
+        {% for f in files %}
+          <option value="{{ f.name }}" {% if current and f.name == current.name %}selected{% endif %}>
+            {{ parse_date(f.name) }} — {{ f.name }}
+          </option>
+        {% endfor %}
+      </select>
+      <noscript><button type="submit">查看</button></noscript>
+    </form>
+    {% endif %}
+  </div>
+
+  {% if not files %}
+    <p class="empty">尚未生成任何报告。请先运行 <code>python -m llm_report.report_generator</code>。</p>
+  {% else %}
+    <article class="markdown-body">
+      {{ html_body | safe }}
+    </article>
+  {% endif %}
+</section>
+{% endblock %}

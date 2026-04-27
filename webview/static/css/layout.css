@@ -1,0 +1,50 @@
+/* Page chrome: topbar, content wrapper, footer, card. */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.brand a {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text);
+}
+.topnav a {
+  margin-left: 16px;
+  color: var(--text);
+  font-weight: 500;
+}
+.topnav a:hover { color: var(--accent); }
+
+.content {
+  max-width: 1280px;
+  margin: 20px auto;
+  padding: 0 16px 40px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: var(--shadow);
+  margin-bottom: 16px;
+}
+.card.inner { box-shadow: none; padding: 16px; }
+
+.footer {
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.82rem;
+  padding: 20px 0 30px;
+}
+
+@media (max-width: 720px) {
+  .topnav a { margin-left: 10px; }
+}

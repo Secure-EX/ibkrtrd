@@ -1,0 +1,33 @@
+/* Trend analysis panel + section headers + colored badges. */
+.trend-panel { margin-top: 18px; }
+
+.trend-header,
+.stage1-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.trend-group { margin-bottom: 12px; }
+
+.badges { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.86rem;
+  background: var(--neutral-bg);
+  color: var(--neutral-fg);
+  border: 1px solid transparent;
+}
+.badge .badge-label { font-weight: 500; opacity: 0.8; }
+.badge .badge-value { font-weight: 600; }
+.badge.good { background: var(--good-bg); color: var(--good-fg); }
+.badge.bad { background: var(--bad-bg); color: var(--bad-fg); }
+.badge.neutral { background: var(--neutral-bg); color: var(--neutral-fg); }

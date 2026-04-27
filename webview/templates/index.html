@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}首页 · HK Stock Webview{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>HK 股票分析视图</h1>
+  <p class="muted">本地浏览 LLM 报告与个股技术图表。所有数据来自项目 <code>data/</code> 目录。</p>
+
+  <div class="grid two">
+    <div class="card inner">
+      <h2>📄 报告</h2>
+      <p>{{ reports|length }} 份 markdown 报告</p>
+      {% if reports %}
+        <ul class="link-list">
+          {% for r in reports[:5] %}
+            <li><a href="{{ url_for('reports') }}?file={{ r.name }}">{{ parse_date(r.name) }} — {{ r.name }}</a></li>
+          {% endfor %}
+        </ul>
+        {% if reports|length > 5 %}<a class="more" href="{{ url_for('reports') }}">查看全部 →</a>{% endif %}
+      {% else %}
+        <p class="empty">尚未生成任何报告。先运行 pipeline。</p>
+      {% endif %}
+    </div>
+
+    <div class="card inner">
+      <h2>📈 图表</h2>
+      <p>{{ tickers|length }} 个标的</p>
+      {% if tickers %}
+        <ul class="link-list ticker-list">
+          {% for t in tickers %}
+            <li><a href="{{ url_for('chart_page', ticker=t) }}">{{ t }}</a></li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="empty">未发现 OHLCV 数据。</p>
+      {% endif %}
+    </div>
+  </div>
+</section>
+{% endblock %}

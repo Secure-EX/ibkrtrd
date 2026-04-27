@@ -1,0 +1,26 @@
+/* Home page: report list and ticker list cards. */
+.grid.two {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.link-list { list-style: none; padding: 0; margin: 8px 0; }
+.link-list li { padding: 4px 0; border-bottom: 1px dashed var(--border); }
+.link-list li:last-child { border-bottom: none; }
+
+.ticker-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 6px;
+}
+.ticker-list li {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  text-align: center;
+  background: var(--card-elev);
+}
+
+.more { display: inline-block; margin-top: 6px; font-size: 0.9rem; }
