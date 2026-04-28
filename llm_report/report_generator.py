@@ -103,6 +103,7 @@ def _send_message(
     cli_path: str = "claude",
     effort: str | None = None,
     betas: list[str] | None = None,
+    allowed_tools: list[str] | None = None,
 ) -> tuple[str, str]:
     """
     Send one message to the Claude CLI in non-interactive print mode.
@@ -112,6 +113,9 @@ def _send_message(
     betas : list[str] | None
         Optional list of Anthropic beta flags (e.g. ["context-1m-2025-08-07"]).
         Passed to the subprocess via ANTHROPIC_BETAS env var (comma-separated).
+    allowed_tools : list[str] | None
+        If provided, passed as --allowedTools to the CLI. Pass [] to disable all
+        tools (prevents Claude from attempting file writes or web searches).
 
     Returns
     -------
@@ -133,6 +137,8 @@ def _send_message(
         cmd += ["--effort", effort]
     if session_id:
         cmd += ["--resume", session_id]
+    if allowed_tools is not None:
+        cmd += ["--allowedTools", ",".join(allowed_tools)]
 
     env = os.environ.copy()
     if betas:
@@ -356,6 +362,7 @@ def generate_report(web_prompts_dir: Path | None = None) -> Path | None:
                 session_id=None,
                 timeout=_TIMEOUT_STOCK,
                 cli_path=cli_path,
+                allowed_tools=[],  # pure text generation — no tools needed
             )
             responses.append({"label": "持仓情况总览表格", "text": text})
             print(f"  ✓ 持仓表格已生成 ({len(text):,} 字符)")
@@ -539,6 +546,7 @@ def generate_staged_report(web_prompts_dir: Path | None = None) -> Path | None:
                 session_id=None,
                 timeout=_TIMEOUT_STAGE0,
                 cli_path=cli_path,
+                allowed_tools=[],  # pure text generation — no tools needed
             )
             _write_stage_file(stage_dir, "stage0_portfolio.md", stage0_text)
             # Portfolio table is already compact — reuse as compact directly
