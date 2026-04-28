@@ -55,17 +55,28 @@ def generate_consolidated_api_prompt() -> str:
     positions_file = _get_latest_file(PORTFOLIO_DIR, "current_positions_")
     if positions_file:
         df_pos = pd.read_csv(positions_file)
-        # 用我们刚写的过滤器清洗一下浮点数，直接转字典
-        global_context["current_all_positions"] = sanitize_for_web(df_pos.to_dict(orient='records'))
+        records = df_pos.to_dict(orient='records')
 
-        # 把 IBKR 原生 symbol 转成标准 ticker (如 "700"+HKD → "0700.HK")，与 payload 文件名对齐
-        for row in df_pos.to_dict(orient='records'):
-            raw_symbol = str(row['Symbol'])
+        # HKD 个股的 Symbol 统一补齐到 4 位 (700 → "0700")，与 payload 文件名一致；
+        # 同时一并构建持仓白名单，避免再扫一遍 DataFrame
+        for row in records:
+            raw = row.get('Symbol')
             currency = row.get('Currency', '')
             if currency == 'HKD':
-                held_tickers.add(raw_symbol.zfill(4) + ".HK")
+                try:
+                    row['Symbol'] = f"{int(float(raw)):04d}"
+                except (TypeError, ValueError):
+                    row['Symbol'] = str(raw)
+                held_tickers.add(row['Symbol'] + ".HK")
             else:
-                held_tickers.add(raw_symbol)
+                row['Symbol'] = str(raw)
+                held_tickers.add(row['Symbol'])
+
+        # 按 Symbol 升序排列，输出顺序稳定
+        records.sort(key=lambda r: r.get('Symbol', ''))
+
+        # 用我们刚写的过滤器清洗一下浮点数
+        global_context["current_all_positions"] = sanitize_for_web(records)
 
     # ==========================================
     # 2. 聚合并挂载所有个股切片 (Stock Queue)

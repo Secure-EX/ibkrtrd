@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -8,7 +9,7 @@ from pathlib import Path
 import markdown as md
 import pandas as pd
 
-from config import FINAL_REPORTS_DIR, LATEST_DIR, OHLCV_DIR
+from config import FINAL_REPORTS_DIR, LATEST_DIR, OHLCV_DIR, PORTFOLIO_DIR
 
 REPORT_GLOB = "CLAUDE_staged_*.md"
 
@@ -101,6 +102,112 @@ def parse_report_date(filename: str) -> str:
     return stem
 
 
+def _normalize_symbol(raw) -> str | None:
+    """IBKR positions CSV stores symbol as bare digits (700 or '700.0' -> '0700.HK')."""
+    if raw is None:
+        return None
+    try:
+        n = int(float(raw))
+    except (TypeError, ValueError):
+        return None
+    if n <= 0:
+        return None
+    return f"{n:04d}.HK"
+
+
+@lru_cache(maxsize=1)
+def load_positions() -> list[dict]:
+    """Load most recent current_positions_*.csv, normalize symbols, return list of dicts."""
+    files = sorted(PORTFOLIO_DIR.glob("current_positions_*.csv"), reverse=True)
+    if not files:
+        return []
+    df = pd.read_csv(files[0])
+    out: list[dict] = []
+    for _, row in df.iterrows():
+        sym = _normalize_symbol(row.get("Symbol"))
+        if not sym:
+            continue
+        try:
+            out.append({
+                "symbol": sym,
+                "name_en": str(row.get("Company Name (EN)", "")).strip(),
+                "currency": str(row.get("Currency", "")).strip(),
+                "qty": float(row.get("Position", 0) or 0),
+                "avg_price": float(row.get("Avg Price", 0) or 0),
+                "last": float(row.get("Last", 0) or 0),
+                "change_ratio": float(row.get("Change Ratio", 0) or 0),
+                "market_value": float(row.get("Market Value", 0) or 0),
+                "cost_basis": float(row.get("Cost Basis", 0) or 0),
+                "unrealized_pnl": float(row.get("Unrealized P&L", 0) or 0),
+                "unrealized_pnl_ratio": float(row.get("Unrealized P&L Ratio", 0) or 0),
+                "weight_ratio": float(row.get("Net Liq Ratio", 0) or 0),
+            })
+        except (ValueError, TypeError):
+            continue
+    out.sort(key=lambda r: r["weight_ratio"], reverse=True)
+    return out
+
+
+def get_position(ticker: str) -> dict | None:
+    for p in load_positions():
+        if p["symbol"] == ticker:
+            return p
+    return None
+
+
+@lru_cache(maxsize=1)
+def load_portfolio_summary() -> dict | None:
+    path = LATEST_DIR / "portfolio_risk.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+
+def latest_data_date() -> str | None:
+    """Date of newest portfolio snapshot (proxy for 'latest data refresh')."""
+    files = sorted(PORTFOLIO_DIR.glob("current_positions_*.csv"), reverse=True)
+    if not files:
+        return None
+    digits = "".join(ch for ch in files[0].stem if ch.isdigit())
+    if len(digits) == 8:
+        try:
+            return datetime.strptime(digits, "%Y%m%d").strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    return None
+
+
+_H1_RE = re.compile(r"^\s*#\s+(.+?)\s*$", re.MULTILINE)
+_BLOCKQUOTE_RE = re.compile(r"^\s*>\s+(.+?)\s*$", re.MULTILINE)
+
+
+def split_stage1_head(md_text: str) -> tuple[str | None, str | None, str]:
+    """Pull the first H1 + first blockquote line out of the markdown.
+    Returns (title, meta_line, body_without_them). The body keeps formatting
+    so downstream markdown rendering is unaffected for the rest of the doc."""
+    title = None
+    meta = None
+    body = md_text
+
+    h1 = _H1_RE.search(body)
+    if h1:
+        title = h1.group(1).strip()
+        body = body[:h1.start()] + body[h1.end():]
+
+    bq = _BLOCKQUOTE_RE.search(body)
+    if bq:
+        meta = bq.group(1).strip()
+        body = body[:bq.start()] + body[bq.end():]
+
+    body = body.lstrip("\n").lstrip("-").lstrip("\n")
+    return title, meta, body
+
+
 def clear_caches() -> None:
     load_ohlcv.cache_clear()
     load_payload.cache_clear()
+    load_positions.cache_clear()
+    load_portfolio_summary.cache_clear()

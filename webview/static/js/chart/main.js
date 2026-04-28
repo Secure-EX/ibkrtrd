@@ -43,6 +43,10 @@ function init() {
   wireCheckbox('ma-toggle', 'showMA');
 
   window.addEventListener('resize', resize);
+  // Re-paint chart when theme toggles so colors match the new palette.
+  document.addEventListener('themechange', () => {
+    if (state.rows.length) render();
+  });
 
   fetchData();
 }

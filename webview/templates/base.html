@@ -1,9 +1,14 @@
 <!doctype html>
-<html lang="zh-Hans">
+<html lang="zh-Hans" data-theme="dark">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{% block title %}HK Stock Webview{% endblock %}</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@500;600&display=swap" rel="stylesheet">
+
   <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/layout.css') }}" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/forms.css') }}" />
@@ -12,21 +17,43 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/chart.css') }}" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/trend.css') }}" />
   {% block head_extra %}{% endblock %}
+
+  <script src="{{ url_for('static', filename='js/theme.js') }}"></script>
 </head>
-<body>
-  <header class="topbar">
-    <div class="brand"><a href="{{ url_for('index') }}">HK Stock Webview</a></div>
-    <nav class="topnav">
-      <a href="{{ url_for('reports') }}">报告</a>
-      <a href="{{ url_for('charts_index') }}">图表</a>
-    </nav>
-  </header>
-  <main class="content">
-    {% block content %}{% endblock %}
-  </main>
-  <footer class="footer">
-    <span>本地视图 · 仅监听 127.0.0.1</span>
-  </footer>
-  {% block scripts %}{% endblock %}
+<body class="{% block body_class %}{% endblock %}">
+
+{% block layout %}
+<header class="head">
+  <a class="brand" href="{{ url_for('index') }}">
+    <span class="brand-mark">⌖</span>
+    <span>HK Stock Webview</span>
+    <small>本地视图</small>
+  </a>
+  <nav class="topnav">
+    <a href="{{ url_for('index') }}" class="{% if active_nav == 'home' %}active{% endif %}">首页</a>
+    <a href="{{ url_for('reports') }}" class="{% if active_nav == 'reports' %}active{% endif %}">报告</a>
+    <a href="{{ url_for('charts_index') }}" class="{% if active_nav == 'charts' %}active{% endif %}">图表</a>
+  </nav>
+  <div class="head-spacer"></div>
+  <button class="icon-btn" id="theme-toggle" title="切换主题"></button>
+</header>
+
+<main>
+  {% block content %}{% endblock %}
+</main>
+
+<footer class="foot">
+  <span>本地视图</span>
+  <span class="sep">·</span>
+  <span>仅监听 127.0.0.1</span>
+  <span class="sep">·</span>
+  <span>数据来源：IBKR · LLM Pipeline</span>
+  {% if latest_date %}
+    <span class="right">数据生成日期：{{ latest_date }}</span>
+  {% endif %}
+</footer>
+{% endblock %}
+
+{% block scripts %}{% endblock %}
 </body>
 </html>

@@ -1,39 +1,110 @@
 {% extends "base.html" %}
 {% block title %}首页 · HK Stock Webview{% endblock %}
 {% block content %}
-<section class="card">
-  <h1>HK 股票分析视图</h1>
-  <p class="muted">本地浏览 LLM 报告与个股技术图表。所有数据来自项目 <code>data/</code> 目录。</p>
+<div class="wrap">
 
-  <div class="grid two">
-    <div class="card inner">
-      <h2>📄 报告</h2>
-      <p>{{ reports|length }} 份 markdown 报告</p>
+  <section class="hero">
+    <h1>HK 股票分析视图</h1>
+    <p>本地浏览 LLM 报告与个股技术图表。所有数据来自项目 <code>data/</code> 目录。</p>
+    <div class="stats">
+      <div class="stat"><span class="l">持仓标的</span><span class="v">{{ tickers|length }}<small>支</small></span></div>
+      <div class="stat"><span class="l">分析报告</span><span class="v">{{ reports|length }}<small>份</small></span></div>
+      <div class="stat"><span class="l">最新数据</span><span class="v">{{ latest_date or '—' }}</span></div>
+    </div>
+  </section>
+
+  {% if summary %}
+  <div class="summary-row">
+    <div class="cell">
+      <div class="l">净清算价值</div>
+      <div class="v">{{ summary.base_currency }} {{ '{:,.0f}'.format(summary.net_liquidation) }}</div>
+      <div class="sub">基础币种估值</div>
+    </div>
+    <div class="cell">
+      <div class="l">现金</div>
+      <div class="v">{{ summary.base_currency }} {{ '{:,.0f}'.format(summary.total_cash) }}</div>
+      <div class="sub">现金占比 {{ '{:.1%}'.format(summary.cash_ratio) }}</div>
+    </div>
+    <div class="cell">
+      {% set pnl = summary.total_unrealized_pnl %}
+      {% set pnl_cls = 'up' if pnl >= 0 else 'down' %}
+      <div class="l">未实现盈亏</div>
+      <div class="v {{ pnl_cls }}">{{ '+' if pnl >= 0 else '' }}{{ '{:,.0f}'.format(pnl) }}</div>
+      <div class="sub {{ pnl_cls }}">{{ summary.base_currency }}</div>
+    </div>
+    <div class="cell">
+      <div class="l">持仓数量</div>
+      <div class="v">{{ positions|length }}<small style="margin-left:4px;color:var(--fg-2);font-size:12px;">支</small></div>
+      <div class="sub">已建仓标的</div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="grid">
+
+    <section class="card">
+      <div class="panel-head">
+        <h2>📄 分析报告</h2>
+        <span class="count">{{ reports|length }} 份</span>
+      </div>
       {% if reports %}
-        <ul class="link-list">
-          {% for r in reports[:5] %}
-            <li><a href="{{ url_for('reports') }}?file={{ r.name }}">{{ parse_date(r.name) }} — {{ r.name }}</a></li>
+        <div class="report-list">
+          {% for r in reports %}
+            <a class="report-item" href="{{ url_for('reports') }}?file={{ r.name }}">
+              <span class="date">{{ parse_date(r.name) }}</span>
+              <span class="name">{{ r.name }}</span>
+              <span class="arrow">→</span>
+            </a>
           {% endfor %}
-        </ul>
-        {% if reports|length > 5 %}<a class="more" href="{{ url_for('reports') }}">查看全部 →</a>{% endif %}
+        </div>
       {% else %}
         <p class="empty">尚未生成任何报告。先运行 pipeline。</p>
       {% endif %}
-    </div>
+    </section>
 
-    <div class="card inner">
-      <h2>📈 图表</h2>
-      <p>{{ tickers|length }} 个标的</p>
-      {% if tickers %}
-        <ul class="link-list ticker-list">
-          {% for t in tickers %}
-            <li><a href="{{ url_for('chart_page', ticker=t) }}">{{ t }}</a></li>
-          {% endfor %}
-        </ul>
+    <section class="card">
+      <div class="panel-head">
+        <h2>📈 持仓</h2>
+        <span class="count">{{ positions|length }} 支</span>
+      </div>
+      {% if positions %}
+        <table class="holdings">
+          <thead>
+            <tr>
+              <th>代码</th>
+              <th>名称</th>
+              <th class="r">持股</th>
+              <th class="r">现价</th>
+              <th class="r">成本</th>
+              <th class="r">盈亏</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in positions %}
+              {% set cls = 'up' if p.unrealized_pnl_ratio >= 0 else 'down' %}
+              {% set sign = '+' if p.unrealized_pnl_ratio >= 0 else '−' %}
+              <tr data-href="{{ url_for('chart_page', ticker=p.symbol) }}">
+                <td class="sym"><a href="{{ url_for('chart_page', ticker=p.symbol) }}">{{ p.symbol }}</a></td>
+                <td class="name" title="{{ p.name_en }}">{{ p.name_en }}</td>
+                <td class="r qty">{{ '{:,.0f}'.format(p.qty) }}</td>
+                <td class="r px">{{ '{:.2f}'.format(p.last) }}</td>
+                <td class="r" style="color:var(--fg-2)">{{ '{:.2f}'.format(p.avg_price) }}</td>
+                <td class="r pnl-pct {{ cls }}">{{ sign }}{{ '{:.2f}'.format((p.unrealized_pnl_ratio|abs) * 100) }}%</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
       {% else %}
-        <p class="empty">未发现 OHLCV 数据。</p>
+        <p class="empty">未找到持仓数据（<code>data/input/portfolio/current_positions_*.csv</code>）。</p>
       {% endif %}
-    </div>
+    </section>
+
   </div>
-</section>
+</div>
+
+<script>
+  document.querySelectorAll('.holdings tbody tr[data-href]').forEach((tr) => {
+    tr.addEventListener('click', () => { window.location.href = tr.dataset.href; });
+  });
+</script>
 {% endblock %}

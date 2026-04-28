@@ -1,33 +1,44 @@
-/* Trend analysis panel + section headers + colored badges. */
-.trend-panel { margin-top: 18px; }
-
-.trend-header,
-.stage1-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
-  flex-wrap: wrap;
-}
-
+/* Trend signal badges (bull / bear / neutral). */
 .trend-group { margin-bottom: 12px; }
+.trend-group:last-child { margin-bottom: 0; }
+.trend-group .gtitle {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--fg-2);
+  margin-bottom: 6px;
+}
 
 .badges { display: flex; flex-wrap: wrap; gap: 6px; }
 
 .badge {
   display: inline-flex;
   align-items: baseline;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: 0.86rem;
-  background: var(--neutral-bg);
-  color: var(--neutral-fg);
-  border: 1px solid transparent;
+  gap: 5px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 4px 8px;
+  font-size: 11px;
 }
-.badge .badge-label { font-weight: 500; opacity: 0.8; }
-.badge .badge-value { font-weight: 600; }
-.badge.good { background: var(--good-bg); color: var(--good-fg); }
-.badge.bad { background: var(--bad-bg); color: var(--bad-fg); }
-.badge.neutral { background: var(--neutral-bg); color: var(--neutral-fg); }
+.badge .l {
+  color: var(--fg-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.badge .v {
+  color: var(--fg-0);
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+.badge.bull {
+  border-color: rgba(33,193,134,0.35);
+  background: var(--up-soft);
+}
+.badge.bull .v { color: var(--up); }
+.badge.bear {
+  border-color: rgba(239,91,91,0.35);
+  background: var(--down-soft);
+}
+.badge.bear .v { color: var(--down); }

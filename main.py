@@ -12,6 +12,7 @@ sys.path.append(str(BASE_DIR))
 from data_pull.ibkr_api import pull_all_ibkr_data, fetch_ibkr_ohlcv  # IBKR 持仓快照 K线拉取主引擎
 from data_pull.yfinance_api import fetch_financials, fetch_index_ohlcv, fallback_to_yfinance  # yfinance 底线财务报表(info.json)+财报副引擎-akshare挂掉 大盘指数拉取 K线副引擎-IBKR挂掉
 from data_pull.akshare_api import fetch_financials_akshare  # akshare 财报主引擎
+from data_pull.news_api import fetch_stock_news  # 拉取新闻
 from config import LOOKBACK_YEARS, INDEX_SYMBOLS
 
 # [2] 数据处理和分析层 (Transform & Calculate)
@@ -21,6 +22,10 @@ from processors.transaction_parser import clean_ibkr_transactions
 
 # [3] 报告与 Prompt 生成层 (Load & Output)
 from llm_report.prompt_template import generate_consolidated_api_prompt
+from llm_report.report_generator import generate_staged_report
+
+# [4] 浏览器展开层 (Web Viewer)
+from webview.app import create_app
 
 def main():
     print("🌟" + "="*50 + "🌟")
@@ -122,7 +127,6 @@ def main():
 
                 print(f"   ▶ [2/3c] 拉取近期新闻与舆情 (News)...")
                 try:
-                    from data_pull.news_api import fetch_stock_news
                     fetch_stock_news(standard_symbol)
                 except Exception as e:
                     print(f"   ⚠️ 新闻拉取失败，将跳过舆情分析: {e}")
@@ -148,16 +152,15 @@ def main():
         # ---------------------------------------------------------
         # 第五阶段：LLM 多阶段报告自动生成
         # ---------------------------------------------------------
-        # print("\n【第五阶段】调用 Claude CLI 多阶段自动生成分析报告...")
-        # try:
-        #     from llm_report.report_generator import generate_staged_report
-        #     generate_staged_report()
-        # except Exception as e:
-        #     print(
-        #         f"⚠️ LLM 报告生成失败，可手动运行:\n"
-        #         f"   python -m llm_report.report_generator\n"
-        #         f"   错误: {e}"
-        #     )
+        print("\n【第五阶段】调用 Claude CLI 多阶段自动生成分析报告...")
+        try:
+            generate_staged_report()
+        except Exception as e:
+            print(
+                f"⚠️ LLM 报告生成失败，可手动运行:\n"
+                f"   python -m llm_report.report_generator\n"
+                f"   错误: {e}"
+            )
 
         # ---------------------------------------------------------
         # 大功告成
@@ -165,8 +168,8 @@ def main():
         print("\n" + "="*54)
         print("🎉 全量化流水线执行完毕！")
         print("📁 Prompt 文本: data/output/latest/web_prompts_YYYYMMDD/")
-        # print("📂 中间分析文件: .../web_prompts_YYYYMMDD/stages/")
-        # print("👉 最终报告: data/output/final_reports/CLAUDE_staged_YYYYMMDD.md")
+        print("📂 中间分析文件: .../web_prompts_YYYYMMDD/stages/")
+        print("👉 最终报告: data/output/final_reports/CLAUDE_staged_YYYYMMDD.md")
         print("="*54 + "\n")
 
     finally:
@@ -174,6 +177,19 @@ def main():
         if ib and ib.isConnected():
             ib.disconnect()
             print("🔌 IBKR 连接已安全断开。")
+
+    # ---------------------------------------------------------
+    # 第六阶段：开启 Web Viewer
+    # ---------------------------------------------------------
+    print("\n【第六阶段】打开 Web Viewer ...")
+    try:
+        create_app().run(host="127.0.0.1", port=5000, debug=False)
+    except Exception as e:
+        print(
+            f"⚠️ Web Viewer 开启失败，可手动运行:\n"
+            f"   python -m webview.app\n"
+            f"   错误: {e}"
+        )
 
 if __name__ == "__main__":
     main()

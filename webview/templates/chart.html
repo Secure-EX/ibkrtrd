@@ -1,100 +1,115 @@
 {% extends "base.html" %}
 {% block title %}图表 · {{ ticker or "" }}{% endblock %}
+{% block body_class %}chart-fullscreen{% endblock %}
 {% block head_extra %}
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
 {% endblock %}
-{% block content %}
-<div class="chart-layout">
-  <div class="chart-pane">
-<section class="card chart-page">
-  <div class="chart-toolbar">
-    <form method="get" class="inline-form" onsubmit="event.preventDefault(); var t=document.getElementById('ticker-select').value; if(t) window.location.href='/charts/'+t;">
-      <label for="ticker-select">标的：</label>
-      <select id="ticker-select" onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()">
-        {% for t in tickers %}
-          <option value="{{ t }}" {% if t == ticker %}selected{% endif %}>{{ t }}</option>
-        {% endfor %}
-      </select>
-    </form>
 
-    <div class="btn-group" id="tf-buttons">
-      <button type="button" data-tf="daily" class="active">日线</button>
-      <button type="button" data-tf="weekly">周线</button>
-      <button type="button" data-tf="monthly">月线</button>
+{% block layout %}
+<div class="layout">
+
+  <header class="head">
+    <a class="brand" href="{{ url_for('index') }}">
+      <span class="brand-mark">⌖</span>
+      <span>HK Stock Webview</span>
+      <small>本地视图</small>
+    </a>
+    <nav class="topnav">
+      <a href="{{ url_for('index') }}">首页</a>
+      <a href="{{ url_for('reports') }}">报告</a>
+      <a href="{{ url_for('charts_index') }}" class="active">图表</a>
+    </nav>
+    <div class="head-spacer"></div>
+    <button class="icon-btn" id="theme-toggle" title="切换主题"></button>
+  </header>
+
+  <div class="body">
+
+    <div class="left">
+
+      <div class="toolbar">
+        <label class="lbl" for="ticker-select">标的</label>
+        <select id="ticker-select" onchange="window.location.href='/charts/'+this.value">
+          {% for t in tickers %}
+            <option value="{{ t }}" {% if t == ticker %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+        <div class="sep"></div>
+        <div class="seg" id="tf-buttons">
+          <button data-tf="daily" class="active">日线</button>
+          <button data-tf="weekly">周线</button>
+          <button data-tf="monthly">月线</button>
+        </div>
+        <div class="seg" id="range-buttons">
+          {% for r in ['1Y','3Y','5Y','All'] %}
+            <button data-range="{{ r }}" class="{% if r == '1Y' %}active{% endif %}">{{ r }}</button>
+          {% endfor %}
+        </div>
+        <div class="seg" id="mode-buttons">
+          <button data-mode="line" class="active">折线</button>
+          <button data-mode="candle">K 线</button>
+        </div>
+        <div class="sep"></div>
+        <label class="toggle"><input type="checkbox" id="bb-toggle" checked /><span class="sw"></span>布林带</label>
+        <label class="toggle"><input type="checkbox" id="ma-toggle" checked /><span class="sw"></span>均线</label>
+      </div>
+
+      <div class="chart-area">
+        <div id="chart"></div>
+      </div>
+
+      <div class="chart-foot">
+        <span id="chart-status">加载中…</span>
+      </div>
+
+      <div class="trend-panel">
+        <h3>走势分析 · <span id="trend-tf-label">日线</span></h3>
+        <div id="trend-body">
+          {% if trend and trend.available %}
+            {% for grp in trend.groups %}
+              <div class="trend-group">
+                <div class="gtitle">{{ grp.title }}</div>
+                <div class="badges">
+                  {% for b in grp.badges %}
+                    {% set tone_cls = {'good': 'bull', 'bad': 'bear'}.get(b.tone, '') %}
+                    <span class="badge {{ tone_cls }}">
+                      <span class="l">{{ b.label }}</span>
+                      <span class="v">{{ b.value }}</span>
+                    </span>
+                  {% endfor %}
+                </div>
+              </div>
+            {% endfor %}
+          {% else %}
+            <p class="empty">日线级别暂无分析数据。</p>
+          {% endif %}
+        </div>
+      </div>
+
     </div>
 
-    <div class="btn-group" id="range-buttons">
-      {% for r in ['1Y','3Y','5Y','All'] %}
-        <button type="button" data-range="{{ r }}" class="{% if r == '1Y' %}active{% endif %}">{{ r }}</button>
-      {% endfor %}
-    </div>
-
-    <div class="btn-group" id="mode-buttons">
-      <button type="button" data-mode="line" class="active">折线</button>
-      <button type="button" data-mode="candle">K 线</button>
-    </div>
-
-    <label class="checkbox">
-      <input type="checkbox" id="bb-toggle" checked />
-      布林带
-    </label>
-    <label class="checkbox">
-      <input type="checkbox" id="ma-toggle" checked />
-      均线
-    </label>
-  </div>
-
-  <div id="chart" class="chart-container"></div>
-  <div id="chart-status" class="muted small"></div>
-
-  <div class="trend-panel">
-    <div class="trend-header">
-      <h2>走势分析 · <span id="trend-tf-label">日线</span></h2>
-    </div>
-    <div id="trend-body">
-      {% if trend and trend.available %}
-        {% for grp in trend.groups %}
-          <div class="trend-group">
-            <h3>{{ grp.title }}</h3>
-            <div class="badges">
-              {% for b in grp.badges %}
-                <span class="badge {{ b.tone }}">
-                  <span class="badge-label">{{ b.label }}</span>
-                  <span class="badge-value">{{ b.value }}</span>
-                </span>
-              {% endfor %}
-            </div>
-          </div>
-        {% endfor %}
-        {% if trend.generation_date %}
-          <p class="muted small">分析数据生成日期：{{ trend.generation_date }}</p>
+    <div class="right">
+      <div class="report-head">
+        <span class="label">个股深度分析报告 (Stage 1)</span>
+        {% if stage1_source %}
+          <span class="source">来源：<code>{{ stage1_source }}</code></span>
         {% endif %}
-      {% else %}
-        <p class="empty">暂无分析数据（缺少 <code>{{ ticker }}_LLM_Payload.json</code>）。</p>
-      {% endif %}
+        <h1>{{ stage1_title or (ticker + ' · 单股分析') }}</h1>
+        {% if position_meta_html %}
+          <div class="position-meta">{{ position_meta_html | safe }}</div>
+        {% endif %}
+      </div>
+      <article class="markdown-body report-body">
+        {% if stage1_html %}
+          {{ stage1_html | safe }}
+        {% else %}
+          <p class="empty">暂无 stage1 报告（在 <code>data/output/latest/web_prompts_*/stages/</code> 中找不到 <code>stage1_{{ ticker.replace('.', '_') }}_full.md</code>）。先运行 pipeline 生成。</p>
+        {% endif %}
+      </article>
     </div>
-  </div>
-</section>
-  </div><!-- /.chart-pane -->
 
-  <div class="report-pane">
-<section class="card stage1-section">
-  <div class="stage1-header">
-    <h2>个股深度分析报告（Stage 1）</h2>
-    {% if stage1_source %}
-      <span class="muted small">来源：<code>{{ stage1_source }}</code></span>
-    {% endif %}
   </div>
-  {% if stage1_html %}
-    <article class="markdown-body">
-      {{ stage1_html | safe }}
-    </article>
-  {% else %}
-    <p class="empty">暂无 stage1 报告（在 <code>data/output/latest/web_prompts_*/stages/</code> 中找不到 <code>stage1_{{ ticker.replace('.', '_') }}_full.md</code>）。先运行 pipeline 生成。</p>
-  {% endif %}
-</section>
-  </div><!-- /.report-pane -->
-</div><!-- /.chart-layout -->
+</div>
 {% endblock %}
 
 {% block scripts %}
