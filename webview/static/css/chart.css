@@ -87,6 +87,78 @@ body.chart-fullscreen { overflow: hidden; }
 .chart-foot .right { margin-left: auto; }
 .chart-foot b { color: var(--fg-0); font-weight: 500; }
 
+/* PE 走势独立面板 */
+.pe-area {
+  border-top: 1px solid var(--line);
+  background: var(--bg-1);
+  padding: 8px 18px 12px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pe-area[hidden] { display: none; }
+.pe-summary {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--fg-1);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  line-height: 1.6;
+}
+.pe-summary b { color: var(--fg-0); font-weight: 500; }
+.pe-summary .sep { color: var(--fg-3); margin: 0 2px; }
+.pe-summary .muted { color: var(--fg-2); }
+#pe-chart { width: 100%; height: 220px; }
+
+.pe-tables {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 10px;
+}
+@media (max-width: 1100px) { .pe-tables { grid-template-columns: 1fr; } }
+.pe-tables h4 {
+  margin: 0 0 6px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--fg-2);
+  font-weight: 500;
+}
+.pe-tables table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.pe-tables thead th {
+  text-align: right;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  color: var(--fg-2);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.pe-tables thead th:first-child { text-align: left; }
+.pe-tables tbody td {
+  text-align: right;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--grid);
+  color: var(--fg-1);
+  white-space: nowrap;
+}
+.pe-tables tbody td:first-child { text-align: left; color: var(--fg-2); }
+.pe-tables tbody tr.current { background: var(--bg-2); }
+.pe-tables tbody tr.current td { color: var(--fg-0); font-weight: 500; }
+.pe-tables .up { color: var(--up); }
+.pe-tables .down { color: var(--down); }
+.pe-tables .muted { color: var(--fg-3); }
+.pe-tables .delta { font-size: 10px; margin-left: 4px; }
+
 /* Trend panel below the chart */
 .trend-panel {
   border-top: 1px solid var(--line);

@@ -19,6 +19,11 @@ from config import LOOKBACK_YEARS, INDEX_SYMBOLS
 from processors.risk_calc import generate_portfolio_risk_report
 from processors.json_assembler import assemble_llm_payload
 from processors.transaction_parser import clean_ibkr_transactions
+from processors.derived_writer import (
+    write_technical_history,
+    write_valuation_history,
+    append_sentiment_archive,
+)
 
 # [3] 报告与 Prompt 生成层 (Load & Output)
 from llm_report.prompt_template import generate_consolidated_api_prompt
@@ -131,7 +136,28 @@ def main():
                 except Exception as e:
                     print(f"   ⚠️ 新闻拉取失败，将跳过舆情分析: {e}")
 
-                print(f"   ▶ [3/3] 组装终极 LLM 数据载荷 (JSON)...")
+                # 派生时序：技术指标 + 估值 + 舆情归档落 parquet（webview 直接读）
+                print(f"   ▶ [3/3a] 落盘技术面历史时序 (parquet)...")
+                try:
+                    write_technical_history(standard_symbol)
+                except Exception as e:
+                    print(f"   ⚠️ 技术面 parquet 落盘失败: {e}")
+
+                print(f"   ▶ [3/3b] 落盘估值历史时序 (parquet)...")
+                try:
+                    write_valuation_history(standard_symbol)
+                except Exception as e:
+                    print(f"   ⚠️ 估值 parquet 落盘失败: {e}")
+
+                print(f"   ▶ [3/3c] 归档舆情记录 (master parquet)...")
+                try:
+                    n_new = append_sentiment_archive(standard_symbol)
+                    if n_new:
+                        print(f"      新增 {n_new} 条舆情记录")
+                except Exception as e:
+                    print(f"   ⚠️ 舆情归档失败: {e}")
+
+                print(f"   ▶ [3/3d] 组装终极 LLM 数据载荷 (JSON)...")
                 assemble_llm_payload(standard_symbol)
 
                 print(f"   ✅ {standard_symbol} 专属研报材料准备就绪！")

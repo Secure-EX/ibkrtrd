@@ -7,6 +7,14 @@ export const state = {
   mode: 'line',     // 'line' | 'candle'
   showBB: true,
   showMA: true,
+  showPE: false,
   rows: [],
+  trades: [],
   maPeriods: [20, 60, 250],
+  peRows: [],
+  peSummary: {},
+  peCurrent: {},
+  peScenarios: [],
+  peTargets: [],
+  peAvailable: false,
 };

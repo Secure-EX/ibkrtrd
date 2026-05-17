@@ -2,16 +2,9 @@
 technical_multifactor.py — 多因子风险评估系统模块
 
 包含内容：
-    子因子计算（各自独立，返回当前值在历史中的百分位 0~1）：
-        - _calc_valuation_factor      : 估值因子（PE/PB 历史百分位；无财报时退化为价格偏离度）
-        - _calc_momentum_factor       : 动量因子（多周期涨跌幅历史百分位）
-        - _calc_volatility_factor_long: 长线波动率因子（20日年化波动率百分位）
-        - _calc_volatility_factor_short: 短线波动率因子（ATR/日内波幅比率百分位）
-        - _calc_technical_factor      : 技术因子（RSI + KDJ-J 历史百分位均值）
-        - _calc_capital_flow_factor   : 资金因子（量比 + 价量相关性百分位均值）
-
     向量化批量计算：
-        - _calc_all_factor_series     : 一次 pass 计算所有因子的滚动百分位时间序列
+        - _calc_all_factor_series     : 一次 pass 计算所有 5 个因子的滚动百分位时间序列
+                                         (估值/动量/波动率/技术/资金)
 
     主入口：
         - calc_multifactor_risk       : 5因子加权合成 → 历史百分位归一化 → 风险水平(0~1)
@@ -41,184 +34,6 @@ except ImportError:
         _get_dynamic_col,
     )
     from technical_risk import _risk_zone_label
-
-
-# ==========================================
-# 子因子计算函数
-# ==========================================
-
-def _calc_valuation_factor(df: pd.DataFrame, window: int,
-                            eps_series: pd.Series = None,
-                            bvps_series: pd.Series = None) -> float:
-    """
-    估值因子：PE/PB 历史百分位的均值。
-
-    如果没有传入 eps_series / bvps_series，则退化为
-    价格/SMA250 的历史百分位（一种简易的价格偏离度估值代理）。
-
-    参数:
-        df       : 含 Close 列的 OHLCV DataFrame
-        window   : 回溯窗口长度
-        eps_series : 与 df 同索引的每股收益序列（可选）
-        bvps_series: 与 df 同索引的每股净资产序列（可选）
-    """
-    closes = df['Close'].tail(window)
-    if len(closes) < 20:
-        return None
-
-    factors = []
-
-    # --- PE 百分位 ---
-    if eps_series is not None and not eps_series.empty:
-        # 对齐索引，加入发布滞后防止 look-ahead bias
-        eps_aligned = _align_financial_to_daily(eps_series, df.index)
-        pe = df['Close'] / eps_aligned.replace(0, np.nan)
-        pe_window = pe.tail(window).dropna()
-        if len(pe_window) >= 20:
-            current_pe = pe_window.iloc[-1]
-            factors.append(_percentile_rank_in_series(current_pe, pe_window))
-
-    # --- PB 百分位 ---
-    if bvps_series is not None and not bvps_series.empty:
-        bvps_aligned = _align_financial_to_daily(bvps_series, df.index)
-        pb = df['Close'] / bvps_aligned.replace(0, np.nan)
-        pb_window = pb.tail(window).dropna()
-        if len(pb_window) >= 20:
-            current_pb = pb_window.iloc[-1]
-            factors.append(_percentile_rank_in_series(current_pb, pb_window))
-
-    # --- Fallback: 价格偏离度代理 ---
-    if not factors:
-        # 用 Close / SMA_250（或窗口适配的长均线）作为估值代理
-        ma_len = min(250, window // 2) if window >= 500 else min(60, window // 2)
-        ma = df['Close'].rolling(ma_len, min_periods=max(10, ma_len // 2)).mean()
-        deviation = (df['Close'] / ma.replace(0, np.nan)).tail(window).dropna()
-        if len(deviation) >= 20:
-            current_dev = deviation.iloc[-1]
-            factors.append(_percentile_rank_in_series(current_dev, deviation))
-
-    valid = [f for f in factors if f is not None]
-    return float(np.mean(valid)) if valid else None
-
-
-def _calc_momentum_factor(df: pd.DataFrame, periods: list, window: int) -> float:
-    """
-    动量因子：多周期涨跌幅的历史百分位均值。
-
-    参数:
-        df      : 含 Close 列的 OHLCV DataFrame
-        periods : 计算动量的周期列表，如 [252]（长线12月） 或 [5, 10]（短线）
-        window  : 百分位回溯窗口
-    """
-    factors = []
-    for p in periods:
-        ret = df['Close'].pct_change(p)
-        ret_window = ret.tail(window).dropna()
-        if len(ret_window) < 20:
-            continue
-        current_ret = ret_window.iloc[-1]
-        factors.append(_percentile_rank_in_series(current_ret, ret_window))
-
-    valid = [f for f in factors if f is not None]
-    return float(np.mean(valid)) if valid else None
-
-
-def _calc_volatility_factor_long(df: pd.DataFrame, window: int) -> float:
-    """
-    长线波动率因子：年化波动率的历史百分位。
-
-    使用 20 日滚动窗口计算日收益率标准差，再年化，
-    最后取当前值在历史窗口内的百分位。
-    """
-    daily_ret = df['Close'].pct_change().replace([np.inf, -np.inf], np.nan)
-    rolling_vol = daily_ret.rolling(20, min_periods=10).std() * np.sqrt(252)
-    vol_window = rolling_vol.tail(window).dropna()
-    if len(vol_window) < 20:
-        return None
-    current_vol = vol_window.iloc[-1]
-    return _percentile_rank_in_series(current_vol, vol_window)
-
-
-def _calc_volatility_factor_short(df: pd.DataFrame, window: int) -> float:
-    """
-    短线波动率因子：ATR 或日内波幅百分位。
-
-    优先使用已计算的 ATR 列；如果不存在，使用 (High-Low)/Close 作为替代。
-    """
-    atr_col = _get_dynamic_col(df, 'ATR')
-    if atr_col and atr_col in df.columns:
-        vol_series = df[atr_col] / df['Close']  # 归一化为比率
-    else:
-        # 日内波幅率
-        vol_series = (df['High'] - df['Low']) / df['Close'].replace(0, np.nan)
-
-    vol_window = vol_series.tail(window).dropna()
-    if len(vol_window) < 20:
-        return None
-    current_vol = vol_window.iloc[-1]
-    return _percentile_rank_in_series(current_vol, vol_window)
-
-
-def _calc_technical_factor(df: pd.DataFrame, window: int) -> float:
-    """
-    技术因子：RSI 和 KDJ-J 值的历史百分位均值。
-
-    RSI/KDJ 本身是 0~100 的指标，但在不同股票/不同时期的分布差异很大，
-    通过百分位归一化可以跨标的比较。
-    """
-    factors = []
-
-    # RSI 百分位
-    rsi_col = 'RSI_14'
-    if rsi_col in df.columns:
-        rsi_window = df[rsi_col].tail(window).dropna()
-        if len(rsi_window) >= 20:
-            current_rsi = rsi_window.iloc[-1]
-            factors.append(_percentile_rank_in_series(current_rsi, rsi_window))
-
-    # KDJ-J 百分位
-    j_col = 'J_9_3'
-    if j_col in df.columns:
-        j_window = df[j_col].tail(window).dropna()
-        if len(j_window) >= 20:
-            current_j = j_window.iloc[-1]
-            factors.append(_percentile_rank_in_series(current_j, j_window))
-
-    valid = [f for f in factors if f is not None]
-    return float(np.mean(valid)) if valid else None
-
-
-def _calc_capital_flow_factor(df: pd.DataFrame, window: int) -> float:
-    """
-    资金因子（机构持仓代理）：量比（volume_ratio）的历史百分位。
-
-    由于缺失机构持仓数据，使用以下代理指标的组合：
-    1. 量比 (当日成交量 / 20日均量) — 反映资金活跃度
-    2. 价量相关性 — 正相关说明主力推动，负相关说明散户出货
-
-    两者取均值作为最终的资金因子。
-    """
-    factors = []
-
-    # --- 量比百分位 ---
-    ma_vol = df['Volume'].rolling(20, min_periods=5).mean()
-    vol_ratio = (df['Volume'] / ma_vol.replace(0, np.nan))
-    vr_window = vol_ratio.tail(window).dropna()
-    if len(vr_window) >= 20:
-        current_vr = vr_window.iloc[-1]
-        factors.append(_percentile_rank_in_series(current_vr, vr_window))
-
-    # --- 价量相关性百分位（10 日滚动 Pearson） ---
-    price_ret = df['Close'].pct_change()
-    vol_ret = df['Volume'].pct_change()
-    corr_rolling = price_ret.rolling(10, min_periods=5).corr(vol_ret)
-    corr_window = corr_rolling.tail(window).dropna()
-    if len(corr_window) >= 20:
-        current_corr = corr_window.iloc[-1]
-        factors.append(_percentile_rank_in_series(current_corr, corr_window))
-
-    valid = [f for f in factors if f is not None]
-    return float(np.mean(valid)) if valid else None
 
 
 # ==========================================
@@ -308,18 +123,20 @@ def _calc_all_factor_series(
         result["technical"] = sum(tech_ranks) / len(tech_ranks)
 
     # ========== 资金因子 ==========
+    # 方向语义：量比高 + 价量正相关 = 主力推动 = 机会信号 → 取 (1 - rank)
+    # 与其它因子统一为「百分位高 = 风险高」的方向，否则放量主力建仓会被误判为风险。
     cap_ranks = []
     ma_vol = df['Volume'].rolling(20, min_periods=5).mean()
     vol_ratio = df['Volume'] / ma_vol.replace(0, np.nan)
     r = _rolling_percentile_rank(vol_ratio, cap_window)
     if r.dropna().shape[0] >= 20:
-        cap_ranks.append(r)
+        cap_ranks.append(1 - r)
     price_ret = df['Close'].pct_change()
     vol_ret = df['Volume'].pct_change()
     corr_rolling = price_ret.rolling(10, min_periods=5).corr(vol_ret)
     r = _rolling_percentile_rank(corr_rolling, cap_window)
     if r.dropna().shape[0] >= 20:
-        cap_ranks.append(r)
+        cap_ranks.append(1 - r)
     if cap_ranks:
         result["capital_flow"] = sum(cap_ranks) / len(cap_ranks)
 

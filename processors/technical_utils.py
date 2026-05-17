@@ -4,13 +4,14 @@ technical_utils.py — 共用辅助工具模块
 包含内容：
     - 常量：FINANCIAL_PUBLICATION_LAG_DAYS（财报发布滞后天数）
     - _align_financial_to_daily : 将财报序列（EPS/BVPS）对齐到日线索引，防止 look-ahead bias
+    - _ttm_from_ytd_series    : 将 YTD 累计季度序列还原为标准 TTM (trailing 12-month)
     - _safe_get               : 安全提取 DataFrame 行数据，NaN → None
     - _get_dynamic_col        : 动态列名匹配器（兼容 pandas_ta 版本差异）
     - _percentile_rank_in_series : 单点百分位排名（0~1）
     - _rolling_percentile_rank   : 向量化滚动百分位排名（替代 O(n²) 逐点循环）
 
-本模块被 technical_indicators / technical_multifactor / technical_market 等子模块共同引用，
-不依赖任何其他 technical_* 子模块，处于依赖链最底层。
+本模块被 technical_indicators / technical_multifactor / technical_market / derived_writer
+等子模块共同引用，不依赖任何其他 technical_* 子模块，处于依赖链最底层。
 """
 
 import sys
@@ -28,6 +29,18 @@ from config import RISK_FREE_RATE  # noqa: F401 (re-exported for convenience)
 # 将财报索引向后平移此天数后再 ffill，确保只使用"当时已公开"的数据。
 FINANCIAL_PUBLICATION_LAG_DAYS = 60
 
+# OHLCV 周/月重采样的统一聚合规则与频率别名
+# (technical_calc.generate_technical_analysis 与 derived_writer.write_technical_history 共用)
+RESAMPLE_AGG = {
+    "Open": "first",
+    "High": "max",
+    "Low": "min",
+    "Close": "last",
+    "Volume": "sum",
+    "Turnover_Value": "sum",
+}
+RESAMPLE_RULES = {"weekly": "W-FRI", "monthly": "ME"}
+
 
 def _align_financial_to_daily(fin_series: pd.Series, daily_index: pd.DatetimeIndex) -> pd.Series:
     """
@@ -40,6 +53,63 @@ def _align_financial_to_daily(fin_series: pd.Series, daily_index: pd.DatetimeInd
     shifted = fin_series.copy()
     shifted.index = shifted.index + pd.Timedelta(days=FINANCIAL_PUBLICATION_LAG_DAYS)
     return shifted.reindex(daily_index).ffill()
+
+
+def _ttm_from_ytd_series(ytd: pd.Series) -> pd.Series:
+    """把 YTD 累计的季度/中期序列转换为标准 TTM (trailing 12-month) 序列。
+
+    数据规约：HK/A 股的 quarterly_income.csv 每行 EPS/Revenue 是该财年从年初到该报告日的累计值。
+    年报 (12-31) 的累计 = 该年 TTM；H1 (06-30) 的累计 = 上半年 6 个月数据。
+
+    TTM 公式（标准做法）:
+        TTM(t) = 上年年报 + (本期 YTD - 上年同期 YTD)
+
+    边界处理：
+        - 当前是年报 (12-31)：直接返回 YTD (本身就是 TTM)
+        - 找不到上年年报：跳过该期 (返回 NaN)
+        - 找不到上年同期：跳过该期 (返回 NaN)
+    """
+    if ytd is None or ytd.empty:
+        return ytd
+    s = ytd.dropna().sort_index()
+    if s.empty:
+        return s
+
+    annual_by_year: dict = {}
+    same_period_by_key: dict = {}
+    for date, val in s.items():
+        same_period_by_key[(date.year, date.month, date.day)] = float(val)
+        if date.month == 12:
+            annual_by_year[date.year] = float(val)
+
+    out: dict = {}
+    for date, val in s.items():
+        if date.month == 12:
+            out[date] = float(val)
+            continue
+
+        prev_year = date.year - 1
+        prev_annual = annual_by_year.get(prev_year)
+        if prev_annual is None:
+            continue
+
+        prev_same = same_period_by_key.get((prev_year, date.month, date.day))
+        if prev_same is None:
+            same_month = [
+                v for (y, m, d), v in same_period_by_key.items()
+                if y == prev_year and m == date.month
+            ]
+            prev_same = same_month[0] if len(same_month) == 1 else None
+
+        if prev_same is None:
+            continue
+        out[date] = prev_annual + (float(val) - prev_same)
+
+    if not out:
+        return pd.Series(dtype=float)
+    result = pd.Series(out).sort_index()
+    result.index.name = s.index.name
+    return result
 
 
 def _safe_get(row: pd.Series, col_name: str, is_int: bool = False):
@@ -55,15 +125,17 @@ def _safe_get(row: pd.Series, col_name: str, is_int: bool = False):
     return float(val)
 
 
-def _get_dynamic_col(df: pd.DataFrame, prefix: str) -> str:
+def _get_dynamic_col(df: pd.DataFrame, prefix: str):
     """
     动态列名匹配器：在 DataFrame 中寻找以指定前缀开头的列名。
     解决 pandas_ta 版本更新导致列名（如 BBU_20_2.0_2.0）变动的问题。
+
+    返回: 找到的列名 str；找不到时返回 None（明确表达"列缺失"）。
     """
     for col in df.columns:
         if col.startswith(prefix):
             return col
-    return ""  # 如果没找到，返回空字符串
+    return None
 
 
 def _percentile_rank_in_series(value: float, history: pd.Series) -> float:

@@ -145,11 +145,13 @@ def _calc_trend_signals(df: pd.DataFrame) -> dict:
             signals["rsi_zone"] = "neutral"
 
     # --- 5. KDJ 区间判定 ---
+    # J 值常规阈值是 ≥100 超买 / ≤0 超卖（J 可超出 [0,100] 区间），
+    # 与 K/D 的 80/20 阈值不同。
     kdj_j = latest.get('J_9_3')
     if pd.notna(kdj_j):
-        if kdj_j >= 80:
+        if kdj_j >= 100:
             signals["kdj_zone"] = "overbought"
-        elif kdj_j <= 20:
+        elif kdj_j <= 0:
             signals["kdj_zone"] = "oversold"
         else:
             signals["kdj_zone"] = "neutral"

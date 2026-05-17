@@ -42,12 +42,20 @@ ARCHIVE_DIR = OUTPUT_ROOT / "_archive"                        # 滚动冷备份�
 LATEST_DIR = OUTPUT_ROOT / "latest"                           # [核心] 永远存放最新、最全的单股 JSON (如 0700_HK_yyyymmdd.json)
 FINAL_REPORTS_DIR = OUTPUT_ROOT / "final_reports"             # LLM 生成的最终 Markdown 报告 (如 GEMINI_MODEL_ID_VERSION_yyyymmdd.md 或 GROK_MODEL_ID_VERSION_yyyymmdd.md)
 
+# 3.3 派生时序层 (Derived: webview/分析直接消费的预计算 parquet)
+DERIVED_ROOT = OUTPUT_ROOT / "derived"
+DERIVED_TECHNICAL_DIR = DERIVED_ROOT / "technical"            # <ticker>_{daily,weekly,monthly}.parquet
+DERIVED_VALUATION_DIR = DERIVED_ROOT / "valuation"            # <ticker>_daily.parquet（PE/PB/PS_TTM 时序）
+DERIVED_SENTIMENT_DIR = DERIVED_ROOT / "sentiment"            # sentiment_master.parquet（按 url_hash 累积去重）
+SENTIMENT_MASTER_PARQUET = DERIVED_SENTIMENT_DIR / "sentiment_master.parquet"
+
 # === 4. 自动创建所有目录 ===
 # 将所有路径放入列表，批量创建
 ALL_DIRS = [
     PORTFOLIO_DIR, TRANSACTIONS_DIR,
     OHLCV_DIR, FINANCIALS_DIR, SENTIMENT_DIR,
-    ARCHIVE_DIR, LATEST_DIR, FINAL_REPORTS_DIR
+    ARCHIVE_DIR, LATEST_DIR, FINAL_REPORTS_DIR,
+    DERIVED_TECHNICAL_DIR, DERIVED_VALUATION_DIR, DERIVED_SENTIMENT_DIR,
 ]
 
 for folder in ALL_DIRS:

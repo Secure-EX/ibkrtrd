@@ -1,6 +1,6 @@
 // Entry point: read window.__TICKER__, wire toolbar events, kick off first fetch.
-import { fetchData } from './api.js';
-import { render, resize } from './plot.js';
+import { fetchData, fetchPE } from './api.js';
+import { render, resize, renderPE } from './plot.js';
 import { state } from './state.js';
 
 function exclusiveActivate(group, btn) {
@@ -20,13 +20,23 @@ function wireButtonGroup(selector, stateKey, dataAttr, opts = {}) {
   });
 }
 
-function wireCheckbox(id, stateKey) {
+function wireCheckbox(id, stateKey, opts = {}) {
   const el = document.getElementById(id);
   if (!el) return;
   el.addEventListener('change', (e) => {
     state[stateKey] = e.target.checked;
-    render();
+    (opts.onChange || render)();
   });
+}
+
+function togglePE() {
+  const area = document.getElementById('pe-area');
+  if (area) area.hidden = !state.showPE;
+  if (state.showPE) {
+    fetchPE();
+  } else {
+    renderPE();
+  }
 }
 
 function init() {
@@ -41,11 +51,13 @@ function init() {
 
   wireCheckbox('bb-toggle', 'showBB');
   wireCheckbox('ma-toggle', 'showMA');
+  wireCheckbox('pe-toggle', 'showPE', { onChange: togglePE });
 
   window.addEventListener('resize', resize);
   // Re-paint chart when theme toggles so colors match the new palette.
   document.addEventListener('themechange', () => {
     if (state.rows.length) render();
+    if (state.showPE && state.peRows.length) renderPE();
   });
 
   fetchData();

@@ -29,7 +29,7 @@ sys.path.insert(0, str(BASE_DIR))
 from config import OHLCV_DIR
 
 try:
-    from .technical_utils import _safe_get, _get_dynamic_col
+    from .technical_utils import _safe_get, _get_dynamic_col, RESAMPLE_AGG, RESAMPLE_RULES
     from .technical_indicators import (
         _add_technical_indicators,
         _calc_price_percentile_rank,
@@ -42,7 +42,7 @@ try:
 except ImportError:
     import sys
     sys.path.insert(0, str(Path(__file__).parent))
-    from technical_utils import _safe_get, _get_dynamic_col
+    from technical_utils import _safe_get, _get_dynamic_col, RESAMPLE_AGG, RESAMPLE_RULES
     from technical_indicators import (
         _add_technical_indicators,
         _calc_price_percentile_rank,
@@ -109,7 +109,12 @@ def _extract_latest_features(
         "date": date_str,
         "close": _safe_get(latest, 'Close'),
         "volume": _safe_get(latest, 'Volume', is_int=True),
-        "volume_ratio_20d": float(latest['Volume'] / df['Volume'].tail(20).mean()) if len(df) >= 20 and df['Volume'].tail(20).mean() > 0 else None,
+        # 量比定义：当日成交量 / 前 20 日均量（不含今日，避免异常放量自我稀释）
+        "volume_ratio_20d": (
+            float(latest['Volume'] / df['Volume'].iloc[-21:-1].mean())
+            if len(df) >= 21 and df['Volume'].iloc[-21:-1].mean() > 0
+            else None
+        ),
         "turnover_value": _safe_get(latest, 'Turnover_Value', is_int=True),
         "vwap": _safe_get(latest, 'VWAP_Custom'),
         "risk_metrics": risk_metrics,
@@ -251,20 +256,12 @@ def generate_technical_analysis(
     )
 
     # 3. 重采样计算周线 (Weekly - 以周五为界)
-    agg_dict = {
-        'Open': 'first',
-        'High': 'max',
-        'Low': 'min',
-        'Close': 'last',
-        'Volume': 'sum',
-        'Turnover_Value': 'sum'
-    }
-    df_weekly = df_daily.resample('W-FRI').agg(agg_dict).dropna(subset=['Close'])
+    df_weekly = df_daily.resample(RESAMPLE_RULES['weekly']).agg(RESAMPLE_AGG).dropna(subset=['Close'])
     df_weekly = _add_technical_indicators(df_weekly)
     weekly_features = _extract_latest_features(df_weekly)
 
     # 4. 重采样计算月线 (Monthly - 以月末为界)
-    df_monthly = df_daily.resample('ME').agg(agg_dict).dropna(subset=['Close'])
+    df_monthly = df_daily.resample(RESAMPLE_RULES['monthly']).agg(RESAMPLE_AGG).dropna(subset=['Close'])
     df_monthly = _add_technical_indicators(df_monthly)
     monthly_features = _extract_latest_features(df_monthly)
 

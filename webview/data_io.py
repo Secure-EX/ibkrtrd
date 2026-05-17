@@ -9,7 +9,17 @@ from pathlib import Path
 import markdown as md
 import pandas as pd
 
-from config import FINAL_REPORTS_DIR, LATEST_DIR, OHLCV_DIR, PORTFOLIO_DIR
+from config import (
+    DERIVED_TECHNICAL_DIR,
+    DERIVED_VALUATION_DIR,
+    FINAL_REPORTS_DIR,
+    FINANCIALS_DIR,
+    LATEST_DIR,
+    OHLCV_DIR,
+    PORTFOLIO_DIR,
+    SENTIMENT_MASTER_PARQUET,
+    TRANSACTIONS_DIR,
+)
 
 REPORT_GLOB = "CLAUDE_staged_*.md"
 
@@ -43,6 +53,7 @@ def list_tickers() -> list[str]:
 
 @lru_cache(maxsize=64)
 def load_ohlcv(ticker: str) -> pd.DataFrame:
+    """Raw daily OHLCV — kept for transactions filtering only. Webview chart 走 load_technical。"""
     path = OHLCV_DIR / f"{ticker}_daily.csv"
     df = pd.read_csv(path, parse_dates=["Date"])
     df = (
@@ -53,6 +64,43 @@ def load_ohlcv(ticker: str) -> pd.DataFrame:
     )
     keep = [c for c in ("Open", "High", "Low", "Close", "Volume") if c in df.columns]
     return df[keep].astype(float)
+
+
+@lru_cache(maxsize=64)
+def load_technical(ticker: str, tf: str = "daily") -> pd.DataFrame:
+    """Read derived/technical/<ticker>_<tf>.parquet。返回空 DataFrame 表示数据缺失。"""
+    path = DERIVED_TECHNICAL_DIR / f"{ticker}_{tf}.parquet"
+    if not path.exists():
+        return pd.DataFrame()
+    return pd.read_parquet(path)
+
+
+@lru_cache(maxsize=64)
+def load_valuation(ticker: str) -> pd.DataFrame:
+    """Read derived/valuation/<ticker>_daily.parquet (Close, PE_TTM, PB, PS_TTM, ...)."""
+    path = DERIVED_VALUATION_DIR / f"{ticker}_daily.parquet"
+    if not path.exists():
+        return pd.DataFrame()
+    return pd.read_parquet(path)
+
+
+@lru_cache(maxsize=1)
+def load_sentiment_master() -> pd.DataFrame:
+    if not SENTIMENT_MASTER_PARQUET.exists():
+        return pd.DataFrame()
+    return pd.read_parquet(SENTIMENT_MASTER_PARQUET)
+
+
+@lru_cache(maxsize=64)
+def load_company_info(ticker: str) -> dict:
+    """yfinance info.json 直读 — 用于 trailingPE/trailingEps 等当前快照字段比对。"""
+    path = FINANCIALS_DIR / f"{ticker}_info.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
 
 
 @lru_cache(maxsize=64)
@@ -156,6 +204,41 @@ def get_position(ticker: str) -> dict | None:
 
 
 @lru_cache(maxsize=1)
+def load_all_trades() -> pd.DataFrame:
+    path = TRANSACTIONS_DIR / "transactions_master.csv"
+    if not path.exists():
+        return pd.DataFrame(columns=["ticker", "Time", "Action", "Quantity", "Price", "amount", "Realized_PnL"])
+    df = pd.read_csv(path, parse_dates=["Time"])
+    df["ticker"] = df["Symbol"].apply(_normalize_symbol)
+    df = df.dropna(subset=["ticker", "Time"]).sort_values("Time").reset_index(drop=True)
+    df["amount"] = df["Quantity"].astype(float) * df["Price"].astype(float)
+    return df
+
+
+def get_trades(ticker: str, start=None, end=None) -> list[dict]:
+    df = load_all_trades()
+    if df.empty:
+        return []
+    df = df[df["ticker"] == ticker]
+    if start is not None:
+        df = df[df["Time"] >= pd.Timestamp(start)]
+    if end is not None:
+        df = df[df["Time"] <= pd.Timestamp(end)]
+    out: list[dict] = []
+    for row in df.itertuples(index=False):
+        action = str(row.Action).upper()
+        out.append({
+            "date": row.Time.strftime("%Y-%m-%d"),
+            "action": action,
+            "qty": float(row.Quantity),
+            "price": float(row.Price),
+            "amount": float(row.amount),
+            "realized_pnl": float(row.Realized_PnL) if action == "SELL" else None,
+        })
+    return out
+
+
+@lru_cache(maxsize=1)
 def load_portfolio_summary() -> dict | None:
     path = LATEST_DIR / "portfolio_risk.json"
     if not path.exists():
@@ -208,6 +291,11 @@ def split_stage1_head(md_text: str) -> tuple[str | None, str | None, str]:
 
 def clear_caches() -> None:
     load_ohlcv.cache_clear()
+    load_technical.cache_clear()
+    load_valuation.cache_clear()
+    load_sentiment_master.cache_clear()
+    load_company_info.cache_clear()
     load_payload.cache_clear()
     load_positions.cache_clear()
     load_portfolio_summary.cache_clear()
+    load_all_trades.cache_clear()

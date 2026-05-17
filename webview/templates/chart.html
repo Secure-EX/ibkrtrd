@@ -52,10 +52,17 @@
         <div class="sep"></div>
         <label class="toggle"><input type="checkbox" id="bb-toggle" checked /><span class="sw"></span>布林带</label>
         <label class="toggle"><input type="checkbox" id="ma-toggle" checked /><span class="sw"></span>均线</label>
+        <label class="toggle"><input type="checkbox" id="pe-toggle" /><span class="sw"></span>PE 走势</label>
       </div>
 
       <div class="chart-area">
         <div id="chart"></div>
+      </div>
+
+      <div class="pe-area" id="pe-area" hidden>
+        <div class="pe-summary" id="pe-summary"></div>
+        <div id="pe-chart"></div>
+        <div class="pe-tables" id="pe-tables"></div>
       </div>
 
       <div class="chart-foot">

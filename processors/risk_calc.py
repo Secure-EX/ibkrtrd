@@ -67,9 +67,9 @@ def generate_portfolio_risk_report() -> dict:
 
     cash_ratio = total_cash / net_liq
 
-    # 注意：因为我们新的汇率矩阵表里没有抓取 MaintMarginReq（维持保证金），
-    # 这里暂时将其置为 0。如果未来需要精确的杠杆率监控，我们可以再加回来。
-    margin_utilization = 0.0
+    # 注意：当前汇率矩阵表未抓取 MaintMarginReq（维持保证金），暂置 None。
+    # 用 None 而不是 0，避免 LLM/前端把它误读为"完全无杠杆"。
+    margin_utilization = None
     # margin_utilization = maint_margin / net_liq # 保证金占用率 (越接近 1 越容易爆仓)
     
     # ==========================================
@@ -123,7 +123,13 @@ def generate_portfolio_risk_report() -> dict:
     avg_loss_ratio = (abs(sum(losers)) / len(losers)) if len(losers) > 0 else 0.0
     
     # 赔率 (Profit Factor / 盈亏比) = 平均盈利幅度 / 平均亏损幅度
-    odds = (avg_win_ratio / avg_loss_ratio) if avg_loss_ratio > 0 else (99.9 if avg_win_ratio > 0 else 0.0)
+    # 无亏损样本时返回 None（不再用 99.9 魔法值，避免被误读为"接近 100 倍赔率"）
+    if avg_loss_ratio > 0:
+        odds = avg_win_ratio / avg_loss_ratio
+    elif avg_win_ratio > 0:
+        odds = None  # 全员盈利，无亏损分母 → 数据上无法计算赔率
+    else:
+        odds = 0.0
 
     # ==========================================
     # 3. 极限压力测试 (Stress Test)
@@ -164,7 +170,8 @@ def generate_portfolio_risk_report() -> dict:
     with open(risk_file_path, 'w', encoding='utf-8') as f:
         json.dump(risk_report, f, indent=4, ensure_ascii=False)
         
-    print(f"✅ 风控计算完成！(账户净值: {round(net_liq, 2)} CAD, 维持保证金占用: {round(margin_utilization*100, 2)}%)")
+    margin_str = "N/A" if margin_utilization is None else f"{round(margin_utilization*100, 2)}%"
+    print(f"✅ 风控计算完成！(账户净值: {round(net_liq, 2)} CAD, 维持保证金占用: {margin_str})")
     print(f"✅ 账户级风控报告已保存至: {risk_file_path.name}")
     
     return risk_report

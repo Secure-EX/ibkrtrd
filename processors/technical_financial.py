@@ -2,7 +2,7 @@
 technical_financial.py — 财报数据加载模块
 
 包含内容：
-    - load_financial_series : 从三表财报 CSV 中提取逐期 EPS 和 BVPS 序列
+    - load_financial_series : 从三表财报 CSV 中提取逐期 EPS (TTM) 和 BVPS 序列
 
         文件命名约定：
             {ticker}_quarterly_income.csv   → Basic EPS, Net Income（优先）
@@ -10,14 +10,19 @@ technical_financial.py — 财报数据加载模块
             {ticker}_quarterly_balance.csv  → Stockholders Equity（优先）
             {ticker}_annual_balance.csv     → （fallback）
 
+        EPS 还原逻辑：
+            HK/A 股季报 EPS 是 YTD 累计值，需用标准 TTM 公式还原
+            （与 derived_writer.write_valuation_history 同源）
+
         BVPS 推算逻辑：
-            implied_shares = Net Income / Basic EPS
+            implied_shares = Net Income / Basic EPS （季度截面）
             BVPS = Stockholders Equity / implied_shares
 
         返回：(eps_series, bvps_series) — 两个以 Date 为索引的 pd.Series
               如果找不到文件或解析失败，返回 (None, None)
 
 依赖：config.OHLCV_DIR
+     technical_utils._ttm_from_ytd_series
 """
 
 import sys
@@ -29,6 +34,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
 from config import OHLCV_DIR
+
+try:
+    from .technical_utils import _ttm_from_ytd_series
+except ImportError:
+    from technical_utils import _ttm_from_ytd_series
 
 
 def load_financial_series(ticker_symbol: str, financial_dir: Path = None) -> tuple:
@@ -84,15 +94,21 @@ def load_financial_series(ticker_symbol: str, financial_dir: Path = None) -> tup
     if balance_df is None:
         balance_df = _read_fin_csv(financial_dir / f"{ticker_fs}_annual_balance.csv")
 
-    # ------ 3. 提取 EPS ------
+    # ------ 3. 提取 EPS（季报需 TTM 还原；年报 YTD = TTM） ------
     eps_series = None
+    is_quarterly = (
+        income_df is not None
+        and (financial_dir / f"{ticker_fs}_quarterly_income.csv").exists()
+    )
     if income_df is not None:
         for col in ['Basic EPS', 'Diluted EPS']:
             if col in income_df.columns:
                 s = pd.to_numeric(income_df[col], errors='coerce').dropna()
                 if not s.empty:
-                    eps_series = s
-                    break
+                    # 季报 EPS 是 YTD 累计值，需要还原为 TTM 才能正确算 PE
+                    eps_series = _ttm_from_ytd_series(s) if is_quarterly else s
+                    if eps_series is not None and not eps_series.empty:
+                        break
 
     # ------ 4. 推算 BVPS ------
     bvps_series = None

@@ -503,15 +503,20 @@ def generate_fundamental_analysis(ticker_symbol: str) -> dict:
         price_to_dream = _calc_price_to_dream(ps_ratio, rev_growth if rev_growth else None)
 
         # 提取股息与分红数据 (如果前瞻股息没有，就用过去 12 个月的滚动股息)
-        # yfinance 的 dividendYield 返回百分比数字 (如 1.04 代表 1.04%)，除以 100 转为小数比率
+        # 跨版本兼容：yfinance 0.2.x 早期返回小数 (0.0104)，新版返回百分比数字 (1.04)。
+        # 用 > 1 的值域哨兵自动识别——任何合理股息率都不会超过 100%。
+        def _normalize_yield(y):
+            if y is None:
+                return None
+            return (y / 100) if y > 1 else float(y)
+
         div_yield = info_data.get('dividendYield', info_data.get('trailingAnnualDividendYield'))
-        div_yield_ratio = (div_yield / 100) if div_yield else None
+        div_yield_ratio = _normalize_yield(div_yield)
         # 每股绝对分红金额
         div_rate = info_data.get('dividendRate', info_data.get('trailingAnnualDividendRate'))
 
-        # yfinance 的 fiveYearAvgDividendYield 返回百分比数字 (如 0.63 代表 0.63%)，除以 100 转为小数比率
         five_yr_avg_div = info_data.get('fiveYearAvgDividendYield')
-        five_yr_avg_div_ratio = (five_yr_avg_div / 100) if five_yr_avg_div else None
+        five_yr_avg_div_ratio = _normalize_yield(five_yr_avg_div)
 
         # 提取 Beta 和华尔街分析师预期
         beta = info_data.get('beta')
